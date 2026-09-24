@@ -1,6 +1,5 @@
 # Rust
 target/
-Cargo.lock
 **/*.rs.bk
 *.pdb
 
@@ -21,3 +20,4 @@ Cargo.lock
 # Test artifacts
 *.profraw
 *.profdata
+dist/
