@@ -16,13 +16,14 @@ impl DiskTreeApp {
                     ui.set_width(column);
                     ui.add_space(28.0);
                     ui.vertical_centered(|ui| {
-                        ui.label(RichText::new("disktree").size(40.0).strong().color(Color32::WHITE));
-                        ui.label(RichText::new("See what fills your disk, then remove it safely.").size(16.0).color(TEXT_DIM));
+                        ui.label(RichText::new("disktree").size(34.0).strong().color(TEXT));
+                        ui.add_space(4.0);
+                        ui.label(RichText::new("See what fills the disk. Remove what should go.").size(15.0).color(TEXT_DIM));
                     });
                     ui.add_space(26.0);
 
                     if let Some(err) = &self.start_error {
-                        egui::Frame::new().fill(Color32::from_rgb(70, 30, 30)).corner_radius(6.0).inner_margin(10.0).show(ui, |ui| {
+                        egui::Frame::new().fill(Color32::from_rgb(62, 32, 32)).inner_margin(10.0).show(ui, |ui| {
                             ui.set_width(ui.available_width());
                             ui.label(RichText::new(err).color(Color32::from_rgb(255, 200, 200)));
                         });

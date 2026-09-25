@@ -25,17 +25,19 @@ use std::sync::mpsc::{self, Receiver, TryRecvError};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-const BG: Color32 = Color32::from_rgb(17, 19, 25);
-const PANEL: Color32 = Color32::from_rgb(25, 28, 36);
-const CARD: Color32 = Color32::from_rgb(33, 37, 47);
-const CARD_HOVER: Color32 = Color32::from_rgb(42, 47, 60);
-const TEXT_DIM: Color32 = Color32::from_rgb(150, 156, 170);
-const ACCENT: Color32 = Color32::from_rgb(98, 160, 255);
-const DANGER: Color32 = Color32::from_rgb(170, 48, 48);
-const WARN: Color32 = Color32::from_rgb(240, 180, 70);
-const SELECT: Color32 = Color32::from_rgb(255, 214, 90);
-const ROW_H: f32 = 22.0;
-const SELECTION_CARD_H: f32 = 128.0;
+const BG: Color32 = Color32::from_rgb(16, 17, 22);
+const PANEL: Color32 = Color32::from_rgb(22, 24, 31);
+const CARD: Color32 = Color32::from_rgb(30, 33, 42);
+const CARD_HOVER: Color32 = Color32::from_rgb(38, 42, 54);
+const TEXT: Color32 = Color32::from_rgb(226, 228, 234);
+const TEXT_DIM: Color32 = Color32::from_rgb(138, 144, 158);
+const ACCENT: Color32 = Color32::from_rgb(214, 164, 74);
+const DANGER: Color32 = Color32::from_rgb(176, 72, 72);
+const WARN: Color32 = Color32::from_rgb(214, 164, 74);
+const SELECT: Color32 = Color32::from_rgb(232, 184, 92);
+const HAIRLINE: Color32 = Color32::from_rgb(42, 46, 58);
+const ROW_H: f32 = 26.0;
+const SELECTION_CARD_H: f32 = 148.0;
 
 enum Drives {
     Loading(Receiver<Vec<Drive>>),
@@ -896,16 +898,44 @@ fn setup_style(ctx: &egui::Context) {
     let mut visuals = egui::Visuals::dark();
     visuals.panel_fill = PANEL;
     visuals.window_fill = PANEL;
-    visuals.extreme_bg_color = Color32::from_rgb(12, 14, 19);
-    visuals.widgets.inactive.bg_stroke = Stroke::new(1.0, Color32::from_rgb(58, 64, 80));
+    visuals.extreme_bg_color = Color32::from_rgb(12, 13, 17);
     visuals.faint_bg_color = CARD;
-    visuals.selection.bg_fill = Color32::from_rgb(45, 90, 160);
+    visuals.code_bg_color = CARD;
     visuals.hyperlink_color = ACCENT;
-    // The palette is dark; don't follow a light OS theme.
+    visuals.warn_fg_color = WARN;
+    visuals.error_fg_color = Color32::from_rgb(232, 160, 160);
+    visuals.widgets.noninteractive.fg_stroke = Stroke::new(1.0, TEXT);
+    visuals.widgets.noninteractive.bg_stroke = Stroke::new(1.0, HAIRLINE);
+    visuals.widgets.inactive.bg_fill = CARD;
+    visuals.widgets.inactive.weak_bg_fill = Color32::TRANSPARENT;
+    visuals.widgets.inactive.fg_stroke = Stroke::new(1.0, TEXT);
+    visuals.widgets.inactive.bg_stroke = Stroke::new(1.0, HAIRLINE);
+    visuals.widgets.hovered.bg_fill = CARD_HOVER;
+    visuals.widgets.hovered.weak_bg_fill = CARD_HOVER;
+    visuals.widgets.hovered.fg_stroke = Stroke::new(1.0, Color32::WHITE);
+    visuals.widgets.hovered.bg_stroke = Stroke::new(1.0, Color32::from_rgb(70, 76, 92));
+    visuals.widgets.active.bg_fill = Color32::from_rgb(48, 42, 28);
+    visuals.widgets.active.weak_bg_fill = Color32::from_rgb(48, 42, 28);
+    visuals.widgets.active.fg_stroke = Stroke::new(1.0, SELECT);
+    visuals.widgets.active.bg_stroke = Stroke::new(1.0, ACCENT);
+    visuals.widgets.open.bg_fill = CARD;
+    visuals.selection.bg_fill = Color32::from_rgb(58, 48, 28);
+    visuals.selection.stroke = Stroke::new(1.0, SELECT);
+    // Square corners. The original's surfaces are square; rounding every
+    // button is what made this read as stock egui.
+    visuals.window_corner_radius = egui::CornerRadius::ZERO;
+    visuals.menu_corner_radius = egui::CornerRadius::ZERO;
+    visuals.widgets.noninteractive.corner_radius = egui::CornerRadius::ZERO;
+    visuals.widgets.inactive.corner_radius = egui::CornerRadius::ZERO;
+    visuals.widgets.hovered.corner_radius = egui::CornerRadius::ZERO;
+    visuals.widgets.active.corner_radius = egui::CornerRadius::ZERO;
+    visuals.widgets.open.corner_radius = egui::CornerRadius::ZERO;
     ctx.set_theme(egui::ThemePreference::Dark);
     ctx.set_visuals_of(egui::Theme::Dark, visuals);
     ctx.all_styles_mut(|s| {
         s.spacing.item_spacing = Vec2::new(8.0, 6.0);
-        s.spacing.button_padding = Vec2::new(10.0, 4.0);
+        s.spacing.button_padding = Vec2::new(10.0, 5.0);
+        s.spacing.window_margin = egui::Margin::same(12);
+        s.visuals.widgets.inactive.corner_radius = egui::CornerRadius::ZERO;
     });
 }

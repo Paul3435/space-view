@@ -33,8 +33,7 @@ pub(super) fn stat(ui: &mut Ui, label: &str, value: &str) {
 
 pub(super) fn warning_box(ui: &mut Ui, text: &str) {
     egui::Frame::new()
-        .fill(Color32::from_rgb(80, 28, 28))
-        .corner_radius(6.0)
+        .fill(Color32::from_rgb(62, 28, 28))
         .inner_margin(8.0)
         .show(ui, |ui| {
             ui.set_width(ui.available_width());
@@ -45,9 +44,9 @@ pub(super) fn warning_box(ui: &mut Ui, text: &str) {
 pub(super) fn drive_card(ui: &mut Ui, d: &Drive) -> bool {
     let (rect, resp) = ui.allocate_exact_size(Vec2::new(232.0, 96.0), Sense::click());
     let p = ui.painter();
-    p.rect_filled(rect, 8.0, if resp.hovered() { CARD_HOVER } else { CARD });
+    p.rect_filled(rect, 0.0, if resp.hovered() { CARD_HOVER } else { CARD });
     if resp.hovered() {
-        p.rect_stroke(rect, 8.0, Stroke::new(1.0, ACCENT), StrokeKind::Inside);
+        p.rect_stroke(rect, 0.0, Stroke::new(1.0, ACCENT), StrokeKind::Inside);
     }
     let root = d.root.display().to_string();
     let title = if d.label.is_empty() {
@@ -69,13 +68,13 @@ pub(super) fn drive_card(ui: &mut Ui, d: &Drive) -> bool {
             rect.min + Vec2::new(14.0, 44.0),
             Vec2::new(rect.width() - 28.0, 8.0),
         );
-        p.rect_filled(bar, 4.0, Color32::from_rgb(55, 60, 74));
+        p.rect_filled(bar, 0.0, Color32::from_rgb(42, 46, 56));
         let fill = Rect::from_min_size(bar.min, Vec2::new(bar.width() * frac, bar.height()));
         p.rect_filled(
             fill,
-            4.0,
+            0.0,
             if frac > 0.9 {
-                Color32::from_rgb(229, 83, 83)
+                Color32::from_rgb(176, 72, 72)
             } else {
                 ACCENT
             },
@@ -113,13 +112,13 @@ pub(super) fn drive_card(ui: &mut Ui, d: &Drive) -> bool {
 pub(super) fn breadcrumbs(ui: &mut Ui, tree: &Tree, current: NodeId, actions: &mut Vec<Action>) {
     let mut chain = tree.ancestors(current);
     chain.reverse();
-    let skip = chain.len().saturating_sub(6);
+    let skip = chain.len().saturating_sub(5);
     if skip > 0 {
-        ui.label(RichText::new("…").color(TEXT_DIM));
+        ui.label(RichText::new("…").color(TEXT_DIM).size(13.0));
     }
     for (i, &n) in chain.iter().enumerate().skip(skip) {
         if i > skip || skip > 0 {
-            ui.label(RichText::new("›").color(TEXT_DIM));
+            ui.label(RichText::new("/").color(TEXT_DIM).size(13.0));
         }
         let name = if n == Tree::ROOT {
             tree.root_path.display().to_string()
@@ -128,11 +127,15 @@ pub(super) fn breadcrumbs(ui: &mut Ui, tree: &Tree, current: NodeId, actions: &m
         };
         let is_current = n == current;
         let text = if is_current {
-            RichText::new(name).strong().color(Color32::WHITE)
+            RichText::new(name).color(TEXT).size(13.0)
         } else {
-            RichText::new(name).color(ACCENT)
+            RichText::new(name).color(TEXT_DIM).size(13.0)
         };
-        if ui.add(egui::Button::new(text).frame(false)).clicked() && !is_current {
+        if ui
+            .add(egui::Button::new(text).frame(false))
+            .clicked()
+            && !is_current
+        {
             actions.push(Action::GoTo(n));
         }
     }
@@ -149,9 +152,14 @@ pub(super) fn list_row(
         ui.allocate_exact_size(Vec2::new(ui.available_width(), ROW_H), Sense::click());
     let p = ui.painter();
     if selected {
-        p.rect_filled(rect, 3.0, Color32::from_rgb(45, 70, 115));
+        p.rect_filled(rect, 0.0, Color32::from_rgb(48, 42, 28));
+        p.rect_filled(
+            Rect::from_min_size(rect.min, Vec2::new(2.0, rect.height())),
+            0.0,
+            SELECT,
+        );
     } else if resp.hovered() {
-        p.rect_filled(rect, 3.0, CARD);
+        p.rect_filled(rect, 0.0, CARD);
     }
     let size = n.size(metric);
     let frac = if parent_size > 0 {
@@ -159,40 +167,36 @@ pub(super) fn list_row(
     } else {
         0.0
     };
-    // Share-of-folder bar behind the name.
-    let bar_w = (rect.width() - 190.0).max(0.0) * frac.clamp(0.0, 1.0);
-    if bar_w > 0.5 {
-        p.rect_filled(
-            Rect::from_min_size(
-                rect.min + Vec2::new(0.0, ROW_H - 3.0),
-                Vec2::new(bar_w, 2.0),
-            ),
-            0.0,
-            Color32::from_rgb(70, 110, 170),
+    let bar_max = (rect.width() - 210.0).max(0.0);
+    let bar_w = bar_max * frac.clamp(0.0, 1.0);
+    if bar_max > 8.0 {
+        let track = Rect::from_min_size(
+            rect.min + Vec2::new(22.0, ROW_H - 5.0),
+            Vec2::new(bar_max, 2.0),
         );
-    }
-    let icon = Rect::from_min_size(rect.min + Vec2::new(4.0, 6.0), Vec2::new(11.0, 10.0));
-    match n.kind {
-        NodeKind::Dir => {
+        p.rect_filled(track, 0.0, Color32::from_rgb(40, 44, 54));
+        if bar_w > 0.5 {
             p.rect_filled(
-                Rect::from_min_size(icon.min, Vec2::new(5.0, 3.0)),
-                1.0,
-                Color32::from_rgb(220, 180, 90),
-            );
-            p.rect_filled(
-                Rect::from_min_max(icon.min + Vec2::new(0.0, 2.0), icon.max),
-                1.5,
-                Color32::from_rgb(220, 180, 90),
+                Rect::from_min_size(track.min, Vec2::new(bar_w, 2.0)),
+                0.0,
+                if selected { SELECT } else { Color32::from_rgb(120, 96, 52) },
             );
         }
+    }
+    let icon = Rect::from_min_size(rect.min + Vec2::new(8.0, 8.0), Vec2::new(8.0, 8.0));
+    match n.kind {
+        NodeKind::Dir => {
+            let [r, g, b] = n.category.accent();
+            p.rect_filled(icon, 0.0, Color32::from_rgb(r, g, b));
+        }
         NodeKind::File => {
-            let [r, g, b] = n.category.rgb();
-            p.rect_filled(icon.shrink(1.0), 2.0, Color32::from_rgb(r, g, b));
+            let [r, g, b] = n.category.accent();
+            p.rect_filled(icon.shrink(1.0), 0.0, Color32::from_rgb(r, g, b));
         }
         NodeKind::Link => {
             p.rect_stroke(
                 icon.shrink(1.0),
-                2.0,
+                0.0,
                 Stroke::new(1.0, TEXT_DIM),
                 StrokeKind::Inside,
             );
@@ -200,35 +204,37 @@ pub(super) fn list_row(
     }
     let name_rect = Rect::from_min_max(
         rect.min + Vec2::new(22.0, 0.0),
-        Pos2::new(rect.max.x - 178.0, rect.max.y),
+        Pos2::new(rect.max.x - 168.0, rect.max.y),
     );
     let mut name = n.name.to_string();
     if n.kind == NodeKind::Link {
-        name.push_str("  (link, not followed)");
+        name.push_str("  (link)");
     } else if n.is_unreadable() {
-        name.push_str("  (access denied)");
+        name.push_str("  (denied)");
     }
-    let color = if n.kind == NodeKind::Link || n.is_unreadable() {
+    let color = if selected {
+        Color32::WHITE
+    } else if n.kind == NodeKind::Link || n.is_unreadable() {
         TEXT_DIM
     } else {
-        Color32::from_rgb(225, 228, 235)
+        TEXT
     };
     p.with_clip_rect(name_rect).text(
         Pos2::new(name_rect.min.x, rect.center().y),
         Align2::LEFT_CENTER,
         name,
-        FontId::proportional(13.5),
+        FontId::proportional(13.0),
         color,
     );
     p.text(
-        Pos2::new(rect.max.x - 92.0, rect.center().y),
+        Pos2::new(rect.max.x - 86.0, rect.center().y),
         Align2::RIGHT_CENTER,
         format::bytes(size),
         FontId::proportional(13.0),
-        Color32::WHITE,
+        if selected { Color32::WHITE } else { TEXT },
     );
     p.text(
-        Pos2::new(rect.max.x - 50.0, rect.center().y),
+        Pos2::new(rect.max.x - 46.0, rect.center().y),
         Align2::RIGHT_CENTER,
         format::percent(size, parent_size),
         FontId::proportional(12.0),
@@ -240,7 +246,7 @@ pub(super) fn list_row(
         String::new()
     };
     p.text(
-        Pos2::new(rect.max.x - 2.0, rect.center().y),
+        Pos2::new(rect.max.x - 4.0, rect.center().y),
         Align2::RIGHT_CENTER,
         files,
         FontId::proportional(12.0),
@@ -314,31 +320,30 @@ pub(super) fn sort_arrow(painter: &egui::Painter, r: Rect, desc: bool) {
 }
 
 pub(super) fn label_tile(painter: &egui::Painter, r: Rect, name: &str, size: u64, fill: Color32) {
-    if r.width() < 44.0 || r.height() < 15.0 {
+    if r.width() < 48.0 || r.height() < 16.0 {
         return;
     }
-    let text_color = if luminance(fill) > 0.55 {
-        Color32::from_rgb(20, 20, 24)
-    } else {
-        Color32::WHITE
-    };
-    let clip = painter.with_clip_rect(r.shrink(2.0));
-    if r.height() >= 32.0 {
+    // Labels sit on muted fills, so they stay light. A dark label on a
+    // bright block was the old look; the fills are no longer that bright.
+    let text_color = Color32::from_rgb(232, 234, 238);
+    let dim = Color32::from_white_alpha(170);
+    let clip = painter.with_clip_rect(r.shrink(3.0));
+    if r.height() >= 34.0 && r.width() >= 64.0 {
         clip.text(
-            Pos2::new(r.min.x + 5.0, r.min.y + 4.0),
+            Pos2::new(r.min.x + 6.0, r.min.y + 5.0),
             Align2::LEFT_TOP,
             name,
             FontId::proportional(12.0),
             text_color,
         );
         clip.text(
-            Pos2::new(r.min.x + 5.0, r.min.y + 18.0),
+            Pos2::new(r.min.x + 6.0, r.min.y + 20.0),
             Align2::LEFT_TOP,
             format::bytes(size),
             FontId::proportional(11.0),
-            text_color.gamma_multiply(0.8),
+            dim,
         );
-    } else {
+    } else if r.width() >= 36.0 {
         clip.text(
             Pos2::new(r.min.x + 4.0, r.center().y),
             Align2::LEFT_CENTER,
@@ -347,29 +352,29 @@ pub(super) fn label_tile(painter: &egui::Painter, r: Rect, name: &str, size: u64
             text_color,
         );
     }
+    let _ = fill;
+}
+
+/// "1.2 GB" split so the number can be set large and the unit quiet.
+pub(super) fn split_bytes(bytes: u64) -> (String, String) {
+    let text = format::bytes(bytes);
+    match text.rsplit_once(' ') {
+        Some((n, u)) => (n.to_owned(), u.to_owned()),
+        None => (text, String::new()),
+    }
 }
 
 pub(super) fn dir_color(depth: u16, unreadable: bool) -> Color32 {
     if unreadable {
-        return Color32::from_rgb(78, 44, 44);
+        return Color32::from_rgb(62, 36, 36);
     }
-    let d = depth.min(8) as u8;
-    Color32::from_rgb(34 + d * 7, 39 + d * 7, 50 + d * 7)
+    // One dark surface, lifted a little per nesting level. Colour lives in
+    // the file tiles and the top strip, not in the folder frames.
+    let d = depth.min(5) as u8;
+    Color32::from_rgb(26 + d * 5, 28 + d * 5, 34 + d * 6)
 }
 
 pub(super) fn mix(a: Color32, b: Color32, t: f32) -> Color32 {
     let l = |x: u8, y: u8| (x as f32 * (1.0 - t) + y as f32 * t) as u8;
     Color32::from_rgb(l(a.r(), b.r()), l(a.g(), b.g()), l(a.b(), b.b()))
-}
-
-pub(super) fn shade(c: Color32, f: f32) -> Color32 {
-    Color32::from_rgb(
-        (c.r() as f32 * f) as u8,
-        (c.g() as f32 * f) as u8,
-        (c.b() as f32 * f) as u8,
-    )
-}
-
-pub(super) fn luminance(c: Color32) -> f32 {
-    (0.299 * c.r() as f32 + 0.587 * c.g() as f32 + 0.114 * c.b() as f32) / 255.0
 }

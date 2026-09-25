@@ -18,39 +18,112 @@ impl DiskTreeApp {
     pub(super) fn top_bar(&mut self, ui: &mut Ui, actions: &mut Vec<Action>) {
         let Some(tree) = &self.tree else { return };
         let busy = self.task.is_some();
-        egui::Panel::top("top").frame(egui::Frame::new().fill(PANEL).inner_margin(egui::Margin::symmetric(10, 8))).show(ui, |ui| {
+        egui::Panel::top("top")
+            .frame(
+                egui::Frame::new()
+                    .fill(PANEL)
+                    .inner_margin(egui::Margin::symmetric(14, 10))
+                    .stroke(Stroke::new(1.0, HAIRLINE)),
+            )
+            .show(ui, |ui| {
             ui.horizontal(|ui| {
-                ui.label(RichText::new("disktree").strong().size(17.0).color(Color32::WHITE));
-                ui.add_space(6.0);
-                if ui.add_enabled(!busy, egui::Button::new("New scan")).on_hover_text("Back to the drive list").clicked() {
-                    actions.push(Action::NewScan);
+                ui.spacing_mut().item_spacing.x = 10.0;
+                let (icon, _) = ui.allocate_exact_size(Vec2::splat(14.0), Sense::hover());
+                let p = ui.painter();
+                // Four muted blocks, the same idea as the window icon, small
+                // enough to sit in the bar without becoming a logo contest.
+                let gap = 1.0;
+                let half = (icon.width() - gap) / 2.0;
+                let blocks = [
+                    (0.0, 0.0, Category::Code),
+                    (half + gap, 0.0, Category::Archive),
+                    (0.0, half + gap, Category::Video),
+                    (half + gap, half + gap, Category::Audio),
+                ];
+                for (x, y, cat) in blocks {
+                    let [r, g, b] = cat.fill(1);
+                    p.rect_filled(
+                        Rect::from_min_size(icon.min + Vec2::new(x, y), Vec2::splat(half)),
+                        0.0,
+                        Color32::from_rgb(r, g, b),
+                    );
                 }
-                if ui.add_enabled(!busy, egui::Button::new("Rescan")).on_hover_text("Scan everything again (F5)").clicked() {
-                    actions.push(Action::Rescan);
-                }
-                let can_up = tree.node(self.current).parent != NO_NODE;
-                if ui.add_enabled(can_up, egui::Button::new("Up")).on_hover_text("Parent folder (Backspace)").clicked() {
-                    actions.push(Action::Up);
-                }
-                ui.separator();
+                ui.label(
+                    RichText::new("disktree")
+                        .strong()
+                        .size(15.0)
+                        .color(TEXT),
+                );
+                ui.painter().line_segment(
+                    [
+                        Pos2::new(ui.cursor().min.x - 2.0, ui.cursor().min.y + 2.0),
+                        Pos2::new(ui.cursor().min.x - 2.0, ui.cursor().max.y - 2.0),
+                    ],
+                    Stroke::new(1.0, HAIRLINE),
+                );
+                breadcrumbs(ui, tree, self.current, actions);
 
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                    if ui.button("?").on_hover_text("Keyboard shortcuts (F1)").clicked() {
+                    ui.spacing_mut().item_spacing.x = 6.0;
+                    if ui
+                        .button("?")
+                        .on_hover_text("Keyboard shortcuts (F1)")
+                        .clicked()
+                    {
                         actions.push(Action::ShowShortcuts);
                     }
-                    ui.selectable_value(&mut self.metric, Metric::Logical, "Logical size")
-                        .on_hover_text("The file length Explorer shows as \"Size\"");
-                    ui.selectable_value(&mut self.metric, Metric::Allocated, "Size on disk")
-                        .on_hover_text("Space actually allocated on disk: what deleting frees (accounts for compression, sparse files and cloud placeholders)");
+                    let on_disk = self.metric == Metric::Allocated;
+                    let metric_label = if on_disk { "Size on disk" } else { "Logical size" };
+                    if ui
+                        .add(egui::Button::new(
+                            RichText::new(metric_label).color(if on_disk { SELECT } else { TEXT_DIM }),
+                        ))
+                        .on_hover_text("Toggle allocated size (what deleting frees) and logical size")
+                        .clicked()
+                    {
+                        self.metric = if on_disk {
+                            Metric::Logical
+                        } else {
+                            Metric::Allocated
+                        };
+                    }
+                    if ui
+                        .add_enabled(!busy, egui::Button::new("Rescan"))
+                        .on_hover_text("Scan everything again (F5)")
+                        .clicked()
+                    {
+                        actions.push(Action::Rescan);
+                    }
+                    let can_up = tree.node(self.current).parent != NO_NODE;
+                    if ui
+                        .add_enabled(can_up, egui::Button::new("Up"))
+                        .on_hover_text("Parent folder (Backspace)")
+                        .clicked()
+                    {
+                        actions.push(Action::Up);
+                    }
+                    if ui
+                        .add_enabled(!busy, egui::Button::new("New scan"))
+                        .on_hover_text("Back to the drive list")
+                        .clicked()
+                    {
+                        actions.push(Action::NewScan);
+                    }
                     if tree.stats.unreadable > 0 {
-                        let t = RichText::new(format!("{} unreadable", format::count(tree.stats.unreadable))).color(WARN);
-                        if ui.add(egui::Button::new(t).frame(false)).on_hover_text("Folders that could not be read (click for details)").clicked() {
+                        let t = RichText::new(format!(
+                            "{} unreadable",
+                            format::count(tree.stats.unreadable)
+                        ))
+                        .color(WARN)
+                        .size(12.0);
+                        if ui
+                            .add(egui::Button::new(t).frame(false))
+                            .on_hover_text("Folders that could not be read")
+                            .clicked()
+                        {
                             actions.push(Action::ShowUnreadable);
                         }
                     }
-                    ui.with_layout(Layout::left_to_right(Align::Center), |ui| {
-                        breadcrumbs(ui, tree, self.current, actions);
-                    });
                 });
             });
         });
@@ -59,17 +132,25 @@ impl DiskTreeApp {
     pub(super) fn status_bar(&mut self, ui: &mut Ui, actions: &mut Vec<Action>) {
         let Some(tree) = &self.tree else { return };
         let _ = actions;
-        egui::Panel::bottom("status").frame(egui::Frame::new().fill(PANEL).inner_margin(egui::Margin::symmetric(10, 6))).show(ui, |ui| {
-            ui.horizontal_wrapped(|ui| {
-                ui.spacing_mut().item_spacing.x = 12.0;
+        egui::Panel::bottom("status")
+            .frame(
+                egui::Frame::new()
+                    .fill(PANEL)
+                    .inner_margin(egui::Margin::symmetric(14, 7))
+                    .stroke(Stroke::new(1.0, HAIRLINE)),
+            )
+            .show(ui, |ui| {
+            ui.horizontal(|ui| {
+                ui.spacing_mut().item_spacing.x = 14.0;
                 for c in Category::ALL {
-                    let [r, g, b] = c.rgb();
-                    let (rect, _) = ui.allocate_exact_size(Vec2::new(10.0, 10.0), Sense::hover());
-                    ui.painter().rect_filled(rect, 2.0, Color32::from_rgb(r, g, b));
-                    ui.add_space(-8.0);
-                    ui.label(RichText::new(c.label()).size(12.0).color(TEXT_DIM));
+                    let [r, g, b] = c.accent();
+                    let (rect, _) = ui.allocate_exact_size(Vec2::new(8.0, 8.0), Sense::hover());
+                    ui.painter().rect_filled(rect, 0.0, Color32::from_rgb(r, g, b));
+                    ui.add_space(-6.0);
+                    ui.label(RichText::new(c.label()).size(11.5).color(TEXT_DIM));
                 }
             });
+            ui.add_space(2.0);
             ui.horizontal(|ui| {
                 let root = tree.node(Tree::ROOT);
                 let s = &tree.stats;
@@ -112,11 +193,16 @@ impl DiskTreeApp {
                     cur.name.to_string()
                 };
                 ui.add(
+                    egui::Label::new(RichText::new("SELECTION").size(10.5).color(TEXT_DIM))
+                        .truncate(),
+                );
+                ui.add_space(2.0);
+                ui.add(
                     egui::Label::new(
                         RichText::new(title)
-                            .size(17.0)
+                            .size(15.0)
                             .strong()
-                            .color(Color32::WHITE),
+                            .color(TEXT),
                     )
                     .truncate(),
                 );
@@ -127,32 +213,35 @@ impl DiskTreeApp {
                         format::count(cur.files),
                         format::count(self.list.len() as u64)
                     ))
+                    .size(12.0)
                     .color(TEXT_DIM),
                 );
-                ui.add_space(8.0);
+                ui.add_space(10.0);
 
-                // Selection card
+                // Selection card. Fixed height: selecting must not shift the
+                // list under the cursor (the second click of a double-click
+                // would hit another row).
                 egui::Frame::new()
                     .fill(CARD)
-                    .corner_radius(6.0)
-                    .inner_margin(10.0)
+                    .inner_margin(12.0)
                     .show(ui, |ui| {
-                        // Fixed height: selecting must not shift the list under the
-                        // cursor (the second click of a double-click would hit
-                        // another row).
                         ui.set_width(ui.available_width());
                         ui.set_height(SELECTION_CARD_H);
                         match self.selected {
                             None => {
+                                ui.add_space(8.0);
+                                ui.label(
+                                    RichText::new("Nothing selected")
+                                        .size(15.0)
+                                        .color(TEXT),
+                                );
+                                ui.add_space(4.0);
                                 ui.label(
                                     RichText::new(
-                                        "Click an item in the map or the list to select it.",
+                                        "Click a tile or a row. Double-click a folder to open it.",
                                     )
+                                    .size(12.5)
                                     .color(TEXT_DIM),
-                                );
-                                ui.label(
-                                    RichText::new("Double-click a folder to open it.")
-                                        .color(TEXT_DIM),
                                 );
                             }
                             Some(sel) => {
@@ -160,12 +249,51 @@ impl DiskTreeApp {
                                 let path = tree.path_of(sel);
                                 ui.add(
                                     egui::Label::new(
-                                        RichText::new(&*n.name)
-                                            .strong()
-                                            .size(15.0)
-                                            .color(Color32::WHITE),
+                                        RichText::new(&*n.name).strong().size(14.0).color(TEXT),
                                     )
                                     .truncate(),
+                                );
+                                let size = n.size(metric);
+                                let (num, unit) = split_bytes(size);
+                                ui.horizontal(|ui| {
+                                    ui.label(
+                                        RichText::new(num)
+                                            .size(32.0)
+                                            .strong()
+                                            .color(Color32::WHITE),
+                                    );
+                                    ui.label(
+                                        RichText::new(unit)
+                                            .size(16.0)
+                                            .color(TEXT_DIM),
+                                    );
+                                });
+                                let frac = if cur_size > 0 {
+                                    (size as f32 / cur_size as f32).clamp(0.0, 1.0)
+                                } else {
+                                    0.0
+                                };
+                                let (bar, _) =
+                                    ui.allocate_exact_size(Vec2::new(ui.available_width(), 3.0), Sense::hover());
+                                ui.painter().rect_filled(bar, 0.0, Color32::from_rgb(48, 42, 30));
+                                ui.painter().rect_filled(
+                                    Rect::from_min_size(bar.min, Vec2::new(bar.width() * frac, bar.height())),
+                                    0.0,
+                                    ACCENT,
+                                );
+                                ui.add_space(4.0);
+                                let kind = match n.kind {
+                                    NodeKind::Dir => format!("{} files", format::count(n.files)),
+                                    NodeKind::File => n.category.label().to_owned(),
+                                    NodeKind::Link => "Link, not followed".to_owned(),
+                                };
+                                ui.label(
+                                    RichText::new(format!(
+                                        "{} of this folder  ·  {kind}",
+                                        format::percent(size, cur_size)
+                                    ))
+                                    .size(12.0)
+                                    .color(TEXT_DIM),
                                 );
                                 let path_text = path.display().to_string();
                                 ui.add(
@@ -175,48 +303,27 @@ impl DiskTreeApp {
                                     .truncate(),
                                 )
                                 .on_hover_text(&path_text);
-                                let kind = match n.kind {
-                                    NodeKind::Dir => {
-                                        format!("Folder · {} files", format::count(n.files))
-                                    }
-                                    NodeKind::File => n.category.label().to_owned(),
-                                    NodeKind::Link => "Link (not followed)".to_owned(),
-                                };
-                                ui.add(
-                                    egui::Label::new(format!(
-                                        "{} on disk · {} logical · {} of this folder · {kind}",
-                                        format::bytes(n.allocated),
-                                        format::bytes(n.logical),
-                                        format::percent(n.size(metric), cur_size)
-                                    ))
-                                    .truncate(),
-                                );
                                 ui.add_space(4.0);
                                 ui.horizontal(|ui| {
+                                    ui.spacing_mut().item_spacing.x = 6.0;
                                     if n.is_dir()
                                         && ui
                                             .button("Open")
-                                            .on_hover_text("Zoom into this folder (Enter)")
+                                            .on_hover_text("Enter")
                                             .clicked()
                                     {
                                         actions.push(Action::Open(sel));
                                     }
-                                    if ui
-                                        .button("Show in Explorer")
-                                        .on_hover_text("Ctrl+E")
-                                        .clicked()
-                                    {
+                                    if ui.button("Explorer").on_hover_text("Ctrl+E").clicked() {
                                         actions.push(Action::Reveal(sel));
                                     }
-                                    if ui.button("Copy path").on_hover_text("Ctrl+C").clicked() {
+                                    if ui.button("Copy").on_hover_text("Ctrl+C").clicked() {
                                         actions.push(Action::CopyPath(sel));
                                     }
-                                });
-                                ui.horizontal(|ui| {
                                     let can = !busy && n.kind != NodeKind::Link;
                                     if ui
-                                        .add_enabled(can, egui::Button::new("Move to Recycle Bin…"))
-                                        .on_hover_text("Delete key. Asks for confirmation first.")
+                                        .add_enabled(can, egui::Button::new("Recycle"))
+                                        .on_hover_text("Delete. Asks first.")
                                         .clicked()
                                     {
                                         actions.push(Action::Delete(sel, DeleteMode::RecycleBin));
@@ -225,13 +332,10 @@ impl DiskTreeApp {
                                         .add_enabled(
                                             can,
                                             egui::Button::new(
-                                                RichText::new("Delete permanently…")
-                                                    .color(Color32::from_rgb(255, 170, 170)),
+                                                RichText::new("Delete…").color(Color32::from_rgb(232, 160, 160)),
                                             ),
                                         )
-                                        .on_hover_text(
-                                            "Shift+Delete. Bypasses the Recycle Bin; asks twice.",
-                                        )
+                                        .on_hover_text("Shift+Delete. Asks twice.")
                                         .clicked()
                                     {
                                         actions.push(Action::Delete(sel, DeleteMode::Permanent));
@@ -390,42 +494,59 @@ impl DiskTreeApp {
                     let n = tree.node(id);
                     if n.is_dir() {
                         let frame = dir_color(tile.depth, n.is_unreadable());
-                        // A folder too small to open up is tinted with the file
-                        // type that fills it, so it still carries information.
-                        let fill = if tile.nested || n.is_unreadable() || n.allocated == 0 {
+                        // A folder too small to open up takes the hue of the
+                        // file type that fills it, muted, so the map stays one
+                        // surface instead of a grid of saturated blocks.
+                        let fill = if n.is_unreadable() {
+                            frame
+                        } else if tile.nested || n.allocated == 0 {
                             frame
                         } else {
-                            let [cr, cg, cb] = n.category.rgb();
-                            mix(Color32::from_rgb(cr, cg, cb), frame, 0.35)
+                            let [cr, cg, cb] = n.category.fill(tile.depth);
+                            Color32::from_rgb(cr, cg, cb)
                         };
                         painter.rect_filled(r, 0.0, fill);
-                        painter.rect_stroke(r, 0.0, Stroke::new(1.0, BG), StrokeKind::Inside);
+                        // Top-level directories get a thin strip of their hue
+                        // so the first level of structure reads before any
+                        // label. Deeper folders are separated by the gap, not
+                        // by a border on every rectangle.
+                        if tile.depth == 0 && !n.is_unreadable() {
+                            let [ar, ag, ab] = n.category.accent();
+                            let strip_h = 2.0_f32.min(r.height());
+                            painter.rect_filled(
+                                Rect::from_min_size(r.min, Vec2::new(r.width(), strip_h)),
+                                0.0,
+                                Color32::from_rgb(ar, ag, ab),
+                            );
+                        }
                         if tile.has_header {
+                            let header_h = 16.0_f32.min(r.height());
+                            let header = Rect::from_min_size(r.min, Vec2::new(r.width(), header_h));
+                            painter.rect_filled(header, 0.0, mix(fill, Color32::BLACK, 0.28));
+                            if tile.depth == 0 && !n.is_unreadable() {
+                                let [ar, ag, ab] = n.category.accent();
+                                painter.rect_filled(
+                                    Rect::from_min_size(r.min, Vec2::new(r.width(), 2.0)),
+                                    0.0,
+                                    Color32::from_rgb(ar, ag, ab),
+                                );
+                            }
                             let text =
                                 format!("{}  {}", n.name, format::bytes(n.size(self.metric)));
-                            painter.with_clip_rect(r.shrink(1.0)).text(
-                                Pos2::new(r.min.x + 5.0, r.min.y + 2.0),
+                            painter.with_clip_rect(header.shrink(1.0)).text(
+                                Pos2::new(r.min.x + 6.0, r.min.y + 1.0),
                                 Align2::LEFT_TOP,
                                 text,
-                                FontId::proportional(11.5),
-                                Color32::from_rgb(215, 220, 230),
+                                FontId::proportional(11.0),
+                                Color32::from_rgb(214, 218, 226),
                             );
                         } else if !tile.nested {
                             label_tile(&painter, r, &n.name, n.size(self.metric), fill);
                         }
                     } else {
-                        let [cr, cg, cb] = n.category.rgb();
-                        let base = Color32::from_rgb(cr, cg, cb);
-                        let fill = shade(base, 1.0 - (tile.depth as f32 * 0.035).min(0.25));
+                        let [cr, cg, cb] = n.category.fill(tile.depth.saturating_add(1));
+                        let fill = Color32::from_rgb(cr, cg, cb);
                         painter.rect_filled(r, 0.0, fill);
-                        if r.width() > 3.0 && r.height() > 3.0 {
-                            painter.rect_stroke(
-                                r,
-                                0.0,
-                                Stroke::new(1.0, shade(fill, 0.55)),
-                                StrokeKind::Inside,
-                            );
-                        }
                         label_tile(&painter, r, &n.name, n.size(self.metric), fill);
                     }
                 }
@@ -436,19 +557,18 @@ impl DiskTreeApp {
                     ..
                 } => {
                     let base = if largest != NO_NODE && tree.node(largest).kind == NodeKind::File {
-                        let [cr, cg, cb] = tree.node(largest).category.rgb();
+                        let [cr, cg, cb] = tree.node(largest).category.fill(tile.depth);
                         Color32::from_rgb(cr, cg, cb)
                     } else {
-                        Color32::from_rgb(90, 96, 110)
+                        dir_color(tile.depth, false)
                     };
-                    let fill = mix(base, Color32::from_rgb(40, 44, 54), 0.55);
+                    let fill = mix(base, BG, 0.35);
                     painter.rect_filled(r, 0.0, fill);
-                    painter.rect_stroke(r, 0.0, Stroke::new(1.0, BG), StrokeKind::Inside);
                     if r.width() > 60.0 && r.height() > 16.0 {
                         label_tile(
                             &painter,
                             r,
-                            &format!("{} smaller items", format::count(count as u64)),
+                            &format!("{} smaller", format::count(count as u64)),
                             size,
                             fill,
                         );
@@ -463,7 +583,7 @@ impl DiskTreeApp {
                 painter.rect_stroke(
                     to_screen(&t.rect),
                     0.0,
-                    Stroke::new(2.5, SELECT),
+                    Stroke::new(2.0, SELECT),
                     StrokeKind::Inside,
                 );
             }
@@ -473,12 +593,17 @@ impl DiskTreeApp {
             .and_then(|p| treemap::hit_test(&self.tiles, p.x - origin.x, p.y - origin.y))
             .map(|i| self.tiles[i]);
         if let Some(t) = hovered {
-            painter.rect_stroke(
-                to_screen(&t.rect),
-                0.0,
-                Stroke::new(1.5, Color32::WHITE),
-                StrokeKind::Inside,
-            );
+            let ring = to_screen(&t.rect);
+            // Skip the ring when it would just restate the selection.
+            let same = self.selected.is_some_and(|sel| t.kind == TileKind::Node(sel));
+            if !same {
+                painter.rect_stroke(
+                    ring,
+                    0.0,
+                    Stroke::new(1.0, Color32::from_white_alpha(140)),
+                    StrokeKind::Inside,
+                );
+            }
         }
 
         if response.secondary_clicked() {

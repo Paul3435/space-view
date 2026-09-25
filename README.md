@@ -13,9 +13,10 @@ and delete what you don't need, safely.
   files and OneDrive placeholders. Switch to logical size with one click.
 - **Links never followed.** Junctions, symlinks and mount points are shown but not
   entered, so there are no loops and nothing is counted twice.
-- **Nested, squarified treemap**, coloured by file type, with hover details (path, size,
-  % of parent). Double-click to zoom in; use the breadcrumbs, Backspace or the mouse
-  Back button to zoom out.
+- **Nested, squarified treemap**, coloured by file type at one muted level, with a
+  colour strip on the top-level folders and hover details (path, size, % of parent).
+  Double-click to zoom in; use the breadcrumbs, Backspace or the mouse Back button
+  to zoom out.
 - **Sortable list** of the current folder's children (by size, name or file count).
 - **Actions:** Show in Explorer, Copy path, Move to Recycle Bin, Delete permanently.
   After a delete, sizes update in place without a rescan.

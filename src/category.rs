@@ -44,20 +44,44 @@ impl Category {
         }
     }
 
-    /// RGB colour for this category.
+    /// Saturated swatch for the legend and list icons. The mosaic itself is
+    /// painted from [`fill`](Self::fill), a muted version of the same hue.
     pub fn rgb(self) -> [u8; 3] {
         match self {
-            Category::Video => [229, 83, 83],
-            Category::Audio => [178, 102, 224],
-            Category::Image => [92, 190, 108],
-            Category::Document => [77, 148, 235],
-            Category::Archive => [240, 160, 60],
-            Category::DiskImage => [214, 92, 160],
-            Category::Executable => [232, 204, 72],
-            Category::Code => [72, 196, 196],
-            Category::Data => [140, 150, 110],
-            Category::Other => [128, 136, 150],
+            Category::Video => [196, 92, 92],
+            Category::Audio => [168, 112, 196],
+            Category::Image => [86, 168, 112],
+            Category::Document => [96, 140, 196],
+            Category::Archive => [196, 140, 72],
+            Category::DiskImage => [186, 96, 148],
+            Category::Executable => [196, 176, 78],
+            Category::Code => [78, 168, 176],
+            Category::Data => [148, 156, 96],
+            Category::Other => [140, 146, 158],
         }
+    }
+
+    /// Mosaic fill: one muted level for every kind, lifted slightly with
+    /// depth so nesting reads without borders. `depth` 0 is the outermost
+    /// tile of the current view.
+    pub fn fill(self, depth: u16) -> [u8; 3] {
+        let [r, g, b] = self.rgb();
+        let step = depth.min(4) as f32;
+        // Pull hard toward the canvas, then lift a little per nesting level.
+        // Saturated blocks at full chroma are what made the map look like a
+        // chart instead of a surface.
+        let toward = 0.34;
+        let lift = 10.0 + step * 7.0;
+        let mute = |c: u8| ((c as f32) * toward + 22.0 * (1.0 - toward) + lift).clamp(0.0, 255.0);
+        [mute(r) as u8, mute(g) as u8, mute(b) as u8]
+    }
+
+    /// The thin colour strip on a top-level directory: the hue, readable,
+    /// still quieter than a full-chroma block.
+    pub fn accent(self) -> [u8; 3] {
+        let [r, g, b] = self.rgb();
+        let mix = |c: u8| ((c as f32) * 0.72 + 28.0).clamp(0.0, 255.0) as u8;
+        [mix(r), mix(g), mix(b)]
     }
 
     pub fn from_name(name: &str) -> Category {
@@ -127,5 +151,22 @@ mod tests {
         assert_eq!(Category::from_name(".gitignore"), Category::Other);
         assert_eq!(Category::from_name("trailingdot."), Category::Other);
         assert_eq!(Category::from_name("x.unknownext"), Category::Other);
+    }
+
+    #[test]
+    fn mosaic_fills_are_muted_and_lift_with_depth() {
+        for c in Category::ALL {
+            let top = c.fill(0);
+            let deep = c.fill(3);
+            let sat = c.rgb();
+            // Quieter than the legend swatch, so the map is a surface.
+            let chroma = |rgb: [u8; 3]| {
+                let max = rgb[0].max(rgb[1]).max(rgb[2]) as i16;
+                let min = rgb[0].min(rgb[1]).min(rgb[2]) as i16;
+                max - min
+            };
+            assert!(chroma(top) < chroma(sat), "{c:?}");
+            assert!(deep[0] >= top[0] && deep[1] >= top[1] && deep[2] >= top[2]);
+        }
     }
 }
