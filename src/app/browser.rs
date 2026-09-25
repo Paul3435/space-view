@@ -63,9 +63,19 @@ impl DiskTreeApp {
             ui.horizontal_wrapped(|ui| {
                 ui.spacing_mut().item_spacing.x = 12.0;
                 for c in Category::ALL {
-                    let [r, g, b] = c.rgb();
                     let (rect, _) = ui.allocate_exact_size(Vec2::new(10.0, 10.0), Sense::hover());
-                    ui.painter().rect_filled(rect, 2.0, Color32::from_rgb(r, g, b));
+                    if c == Category::Other {
+                        // Uncategorised types each get their own colour.
+                        for (i, key) in [60u16, 25, 1].into_iter().enumerate() {
+                            let [r, g, b] = category::rgb(Category::Other, key);
+                            let x = rect.min.x + i as f32 * rect.width() / 3.0;
+                            let stripe = Rect::from_min_size(Pos2::new(x, rect.min.y), Vec2::new(rect.width() / 3.0, rect.height()));
+                            ui.painter().rect_filled(stripe, 0.0, Color32::from_rgb(r, g, b));
+                        }
+                    } else {
+                        let [r, g, b] = c.rgb();
+                        ui.painter().rect_filled(rect, 2.0, Color32::from_rgb(r, g, b));
+                    }
                     ui.add_space(-8.0);
                     ui.label(RichText::new(c.label()).size(12.0).color(TEXT_DIM));
                 }
@@ -179,7 +189,7 @@ impl DiskTreeApp {
                                     NodeKind::Dir => {
                                         format!("Folder · {} files", format::count(n.files))
                                     }
-                                    NodeKind::File => n.category.label().to_owned(),
+                                    NodeKind::File => type_label(n),
                                     NodeKind::Link => "Link (not followed)".to_owned(),
                                 };
                                 ui.add(
@@ -380,53 +390,65 @@ impl DiskTreeApp {
             return;
         }
 
+        // Fills go into one mesh (one draw call for tens of thousands of
+        // tiles); labels are drawn on top afterwards. Tiles come parents-first,
+        // so children paint over their folder's frame.
+        let metric = self.metric;
+        let mut mesh = egui::Mesh::default();
+        mesh.reserve_vertices(self.tiles.len() * 4);
+        mesh.reserve_triangles(self.tiles.len() * 2);
+        let mut labels: Vec<(Rect, String, u64, Color32)> = Vec::new();
+        let mut headers: Vec<(Rect, String)> = Vec::new();
         for tile in &self.tiles {
             let r = to_screen(&tile.rect);
             if r.width() < 0.5 || r.height() < 0.5 {
                 continue;
             }
+            // A hairline gap between neighbours instead of a dark border.
+            let leaf = if r.width() >= 4.0 && r.height() >= 4.0 {
+                r.shrink(0.5)
+            } else {
+                r
+            };
             match tile.kind {
                 TileKind::Node(id) => {
                     let n = tree.node(id);
                     if n.is_dir() {
                         let frame = dir_color(tile.depth, n.is_unreadable());
-                        // A folder too small to open up is tinted with the file
-                        // type that fills it, so it still carries information.
-                        let fill = if tile.nested || n.is_unreadable() || n.allocated == 0 {
+                        let tint = if n.is_unreadable() || n.allocated == 0 {
                             frame
                         } else {
-                            let [cr, cg, cb] = n.category.rgb();
-                            mix(Color32::from_rgb(cr, cg, cb), frame, 0.35)
+                            node_color(n)
                         };
-                        painter.rect_filled(r, 0.0, fill);
-                        painter.rect_stroke(r, 0.0, Stroke::new(1.0, BG), StrokeKind::Inside);
+                        if tile.nested {
+                            // Frames carry a hint of what's inside.
+                            mesh.add_colored_rect(r, mix(tint, frame, 0.8));
+                        } else {
+                            // Too small to open up: show the type that fills it.
+                            let fill = mix(tint, frame, 0.15);
+                            shaded_rect(&mut mesh, leaf, fill);
+                            labels.push((r, n.name.to_string(), n.size(metric), fill));
+                        }
                         if tile.has_header {
-                            let text =
-                                format!("{}  {}", n.name, format::bytes(n.size(self.metric)));
-                            painter.with_clip_rect(r.shrink(1.0)).text(
-                                Pos2::new(r.min.x + 5.0, r.min.y + 2.0),
-                                Align2::LEFT_TOP,
-                                text,
-                                FontId::proportional(11.5),
-                                Color32::from_rgb(215, 220, 230),
-                            );
-                        } else if !tile.nested {
-                            label_tile(&painter, r, &n.name, n.size(self.metric), fill);
+                            let mut label = n.name.to_string();
+                            let mut cur = id;
+                            for _ in 0..tile.chain {
+                                match treemap::only_dir_child(tree, cur, metric) {
+                                    Some(c) => {
+                                        label.push_str(" › ");
+                                        label.push_str(&tree.node(c).name);
+                                        cur = c;
+                                    }
+                                    None => break,
+                                }
+                            }
+                            headers
+                                .push((r, format!("{label}  {}", format::bytes(n.size(metric)))));
                         }
                     } else {
-                        let [cr, cg, cb] = n.category.rgb();
-                        let base = Color32::from_rgb(cr, cg, cb);
-                        let fill = shade(base, 1.0 - (tile.depth as f32 * 0.035).min(0.25));
-                        painter.rect_filled(r, 0.0, fill);
-                        if r.width() > 3.0 && r.height() > 3.0 {
-                            painter.rect_stroke(
-                                r,
-                                0.0,
-                                Stroke::new(1.0, shade(fill, 0.55)),
-                                StrokeKind::Inside,
-                            );
-                        }
-                        label_tile(&painter, r, &n.name, n.size(self.metric), fill);
+                        let fill = node_color(n);
+                        shaded_rect(&mut mesh, leaf, fill);
+                        labels.push((r, n.name.to_string(), n.size(metric), fill));
                     }
                 }
                 TileKind::Rest {
@@ -435,26 +457,36 @@ impl DiskTreeApp {
                     largest,
                     ..
                 } => {
-                    let base = if largest != NO_NODE && tree.node(largest).kind == NodeKind::File {
-                        let [cr, cg, cb] = tree.node(largest).category.rgb();
-                        Color32::from_rgb(cr, cg, cb)
+                    let base = if largest != NO_NODE {
+                        node_color(tree.node(largest))
                     } else {
                         Color32::from_rgb(90, 96, 110)
                     };
-                    let fill = mix(base, Color32::from_rgb(40, 44, 54), 0.55);
-                    painter.rect_filled(r, 0.0, fill);
-                    painter.rect_stroke(r, 0.0, Stroke::new(1.0, BG), StrokeKind::Inside);
+                    let fill = mix(base, Color32::from_rgb(60, 64, 74), 0.3);
+                    shaded_rect(&mut mesh, leaf, fill);
                     if r.width() > 60.0 && r.height() > 16.0 {
-                        label_tile(
-                            &painter,
+                        labels.push((
                             r,
-                            &format!("{} smaller items", format::count(count as u64)),
+                            format!("{} smaller items", format::count(count as u64)),
                             size,
                             fill,
-                        );
+                        ));
                     }
                 }
             }
+        }
+        painter.add(egui::Shape::mesh(mesh));
+        for (r, text) in headers {
+            painter.with_clip_rect(r.shrink(1.0)).text(
+                Pos2::new(r.min.x + 5.0, r.min.y + 2.0),
+                Align2::LEFT_TOP,
+                text,
+                FontId::proportional(11.5),
+                Color32::from_rgb(225, 229, 238),
+            );
+        }
+        for (r, name, size, fill) in labels {
+            label_tile(&painter, r, &name, size, fill);
         }
 
         // Selection and hover outlines.
@@ -557,9 +589,7 @@ impl DiskTreeApp {
                                 );
                             }
                             NodeKind::File => {
-                                ui.label(
-                                    RichText::new(n.category.label()).size(11.5).color(TEXT_DIM),
-                                );
+                                ui.label(RichText::new(type_label(n)).size(11.5).color(TEXT_DIM));
                             }
                             NodeKind::Link => {}
                         }

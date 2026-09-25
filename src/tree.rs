@@ -7,7 +7,7 @@
 //! directory when the tree is built, and kept consistent by [`Tree::remove`]
 //! and [`Tree::graft`] so a delete never requires a full rescan.
 
-use crate::category::Category;
+use crate::category::{self, Category};
 use std::collections::VecDeque;
 use std::path::{Path, PathBuf};
 
@@ -43,6 +43,9 @@ pub struct Node {
     pub kind: NodeKind,
     /// File type; for directories, the type taking the most space inside.
     pub category: Category,
+    /// For [`Category::Other`]: key of the extension, which picks the colour
+    /// (see [`category::rgb`]). 0 if there is none.
+    pub ext: u16,
     pub flags: u8,
     pub allocated: u64,
     pub logical: u64,
@@ -95,9 +98,20 @@ pub struct ScannedDir {
     pub file_count: u64,
     /// Allocated bytes per [`Category`] in this subtree (for colouring folders).
     pub by_category: [u64; Category::ALL.len()],
+    /// The uncategorised extension with the most bytes here, as (key, bytes).
+    /// Rolled up from each child's leader, so it is a close approximation.
+    pub top_other: (u16, u64),
 }
 
 impl ScannedDir {
+    /// Colour key of the file type taking the most space: (category, ext).
+    pub fn dominant_key(&self) -> (Category, u16) {
+        match self.dominant() {
+            Category::Other => (Category::Other, self.top_other.0),
+            c => (c, 0),
+        }
+    }
+
     /// The file type that takes the most space in this subtree.
     pub fn dominant(&self) -> Category {
         let (i, &max) = self
@@ -132,13 +146,17 @@ impl ScannedDir {
         let mut logical = 0u64;
         let mut file_count = 0u64;
         let mut by_category = [0u64; Category::ALL.len()];
+        let mut others: Vec<(u16, u64)> = Vec::new();
         for f in &files {
             allocated = allocated.saturating_add(f.allocated);
             logical = logical.saturating_add(f.logical);
             if !f.is_link {
                 file_count += 1;
-                let c = Category::from_name(&f.name) as usize;
-                by_category[c] = by_category[c].saturating_add(f.allocated);
+                let (c, key) = category::classify(&f.name);
+                by_category[c as usize] = by_category[c as usize].saturating_add(f.allocated);
+                if key != 0 {
+                    others.push((key, f.allocated));
+                }
             }
         }
         for d in &dirs {
@@ -147,6 +165,23 @@ impl ScannedDir {
             file_count += d.file_count;
             for (acc, b) in by_category.iter_mut().zip(d.by_category) {
                 *acc = acc.saturating_add(b);
+            }
+            if d.top_other.0 != 0 {
+                others.push(d.top_other);
+            }
+        }
+        others.sort_unstable_by_key(|&(k, _)| k);
+        let mut top_other = (0u16, 0u64);
+        let mut i = 0;
+        while i < others.len() {
+            let key = others[i].0;
+            let mut sum = 0u64;
+            while i < others.len() && others[i].0 == key {
+                sum = sum.saturating_add(others[i].1);
+                i += 1;
+            }
+            if sum > top_other.1 || top_other.0 == 0 {
+                top_other = (key, sum);
             }
         }
         ScannedDir {
@@ -159,6 +194,7 @@ impl ScannedDir {
             logical,
             file_count,
             by_category,
+            top_other,
         }
     }
 }
@@ -309,7 +345,7 @@ impl Tree {
             n.files = fresh.file_count;
             n.first_child = NO_NODE;
             n.child_count = 0;
-            n.category = fresh.dominant();
+            (n.category, n.ext) = fresh.dominant_key();
             n.flags = if fresh.unreadable { FLAG_UNREADABLE } else { 0 };
         }
         let mut cur = old.parent;
@@ -356,10 +392,10 @@ impl Tree {
             for item in items {
                 match item {
                     Item::File(f) => {
-                        let category = if f.is_link {
-                            Category::Other
+                        let (category, ext) = if f.is_link {
+                            (Category::Other, 0)
                         } else {
-                            Category::from_name(&f.name)
+                            category::classify(&f.name)
                         };
                         self.nodes.push(Node {
                             name: f.name,
@@ -372,6 +408,7 @@ impl Tree {
                                 NodeKind::File
                             },
                             category,
+                            ext,
                             flags: 0,
                             allocated: f.allocated,
                             logical: f.logical,
@@ -386,6 +423,7 @@ impl Tree {
                             child_count: 0,
                             kind: NodeKind::Link,
                             category: Category::Other,
+                            ext: 0,
                             flags: 0,
                             allocated: 0,
                             logical: 0,
@@ -425,13 +463,15 @@ impl Item {
 }
 
 fn dir_node(name: Box<str>, parent: NodeId, d: &ScannedDir) -> Node {
+    let (category, ext) = d.dominant_key();
     Node {
         name,
         parent,
         first_child: NO_NODE,
         child_count: 0,
         kind: NodeKind::Dir,
-        category: d.dominant(),
+        category,
+        ext,
         flags: if d.unreadable { FLAG_UNREADABLE } else { 0 },
         allocated: d.allocated,
         logical: d.logical,
@@ -629,6 +669,34 @@ mod tests {
         assert_eq!(t.node(Tree::ROOT).category, Category::DiskImage);
         let empty = ScannedDir::new("e".into(), vec![], vec![], false);
         assert_eq!(empty.dominant(), Category::Other);
+        assert_eq!(empty.dominant_key(), (Category::Other, 0));
+    }
+
+    #[test]
+    fn folders_of_unknown_formats_take_the_leading_extension_colour() {
+        let a = dir(
+            "a",
+            vec![
+                file("x.arm", 100, 100),
+                file("y.arm", 100, 100),
+                file("z.tgt", 150, 150),
+            ],
+            vec![],
+        );
+        let b = dir("b", vec![file("w.tgt", 10, 10)], vec![]);
+        let root = dir("", vec![], vec![a, b]);
+        let arm = category::classify("q.arm");
+        let tgt = category::classify("q.tgt");
+        assert_eq!(
+            root.dominant_key(),
+            (Category::Other, arm.1),
+            "arm 200 > tgt 150+10"
+        );
+        let t = Tree::from_scan(PathBuf::from("/r"), root, ScanStats::default());
+        let b = t.find(Path::new("/r/b")).unwrap();
+        assert_eq!((t.node(b).category, t.node(b).ext), tgt);
+        let x = t.find(Path::new("/r/a/x.arm")).unwrap();
+        assert_eq!((t.node(x).category, t.node(x).ext), arm);
     }
 
     #[test]

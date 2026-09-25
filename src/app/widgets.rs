@@ -186,8 +186,7 @@ pub(super) fn list_row(
             );
         }
         NodeKind::File => {
-            let [r, g, b] = n.category.rgb();
-            p.rect_filled(icon.shrink(1.0), 2.0, Color32::from_rgb(r, g, b));
+            p.rect_filled(icon.shrink(1.0), 2.0, node_color(n));
         }
         NodeKind::Link => {
             p.rect_stroke(
@@ -372,4 +371,37 @@ pub(super) fn shade(c: Color32, f: f32) -> Color32 {
 
 pub(super) fn luminance(c: Color32) -> f32 {
     (0.299 * c.r() as f32 + 0.587 * c.g() as f32 + 0.114 * c.b() as f32) / 255.0
+}
+
+/// Colour of a file, or of a folder from the type that fills it.
+pub(super) fn node_color(n: &disktree::tree::Node) -> Color32 {
+    let [r, g, b] = category::rgb(n.category, n.ext);
+    Color32::from_rgb(r, g, b)
+}
+
+/// A filled rectangle lit from the top left, like a cushion treemap.
+pub(super) fn shaded_rect(mesh: &mut egui::Mesh, r: Rect, c: Color32) {
+    if r.width() < 3.0 || r.height() < 3.0 {
+        mesh.add_colored_rect(r, c);
+        return;
+    }
+    let i = mesh.vertices.len() as u32;
+    mesh.colored_vertex(r.left_top(), mix(c, Color32::WHITE, 0.22));
+    mesh.colored_vertex(r.right_top(), mix(c, Color32::WHITE, 0.06));
+    mesh.colored_vertex(r.right_bottom(), shade(c, 0.68));
+    mesh.colored_vertex(r.left_bottom(), shade(c, 0.86));
+    mesh.add_triangle(i, i + 1, i + 2);
+    mesh.add_triangle(i, i + 2, i + 3);
+}
+
+/// A type's short description: its category, or the extension for "Other".
+pub(super) fn type_label(n: &disktree::tree::Node) -> String {
+    if n.category == Category::Other {
+        match n.name.rfind('.') {
+            Some(i) if i > 0 && i + 1 < n.name.len() => format!(".{} file", &n.name[i + 1..]),
+            _ => "File".to_owned(),
+        }
+    } else {
+        n.category.label().to_owned()
+    }
 }
