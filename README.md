@@ -195,6 +195,7 @@ src/
   main.rs       entry point: CLI, renderer selection and fallback, GUI subsystem
   crash.rs      panic hook: crash log next to the exe + message box
   diag.rs       startup log in %LOCALAPPDATA%\disktree
+  icon_design.rs  app icon, drawn in code (window icon and, via build.rs, the exe icon)
   app/          the egui UI (state and actions, screens, browser, dialogs, widgets)
   lib.rs        testable core:
   scan.rs         parallel scan (rayon), cancellation, dedupe by file ID
@@ -204,8 +205,8 @@ src/
   treemap.rs      squarified + nested layout, hit testing
   safety.rs       what may be deleted and how carefully
   ops.rs          IFileOperation / SHFileOperation delete, Explorer, drives, message box
-assets/         icon, manifest, resource script
-scripts/        build-windows.sh, make_icon.py
+assets/         manifest and resource script (build.rs generates the icon)
+scripts/        build-windows.sh
 ```
 
 ## Limitations

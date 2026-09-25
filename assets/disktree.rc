@@ -1,4 +1,6 @@
 // Windows resources: icon, application manifest and version info.
+// build.rs generates the icon from src/icon_design.rs and rewrites the two
+// quoted file names below to absolute paths before compiling.
 // Numeric constants are used instead of <windows.h> so this compiles with
 // llvm-rc when cross-compiling (RT_MANIFEST = 24, VOS_NT_WINDOWS32 = 0x40004,
 // VFT_APP = 1).
