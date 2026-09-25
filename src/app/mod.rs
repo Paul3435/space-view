@@ -9,7 +9,7 @@ mod widgets;
 use widgets::*;
 
 use crate::diag;
-use disktree::category::Category;
+use disktree::category::{self, Category};
 use disktree::format;
 use disktree::ops::{self, DeleteMode, DeleteOutcome, Drive};
 use disktree::safety::{self, Protection, SystemPaths};

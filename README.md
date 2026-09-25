@@ -13,8 +13,10 @@ and delete what you don't need, safely.
   files and OneDrive placeholders. Switch to logical size with one click.
 - **Links never followed.** Junctions, symlinks and mount points are shown but not
   entered, so there are no loops and nothing is counted twice.
-- **Nested, squarified treemap**, coloured by file type, with hover details (path, size,
-  % of parent). Double-click to zoom in; use the breadcrumbs, Backspace or the mouse
+- **Nested, squarified treemap**, shaded and coloured by file type, with hover details
+  (path, size, % of parent). Formats disktree doesn't know (many game assets) each get a
+  colour of their own, folders too small to open up take the colour of what fills them,
+  and chains of single folders (`Steam › steamapps › common`) share one header. Double-click to zoom in; use the breadcrumbs, Backspace or the mouse
   Back button to zoom out.
 - **Sortable list** of the current folder's children (by size, name or file count).
 - **Actions:** Show in Explorer, Copy path, Move to Recycle Bin, Delete permanently.

@@ -143,6 +143,20 @@ pub struct Tile {
     pub has_header: bool,
     /// For directory tiles: whether its children are laid out inside it.
     pub nested: bool,
+    /// For tiles with a header: how many single-child folders below it are
+    /// merged into that header ("Steam › steamapps › common"), following
+    /// [`only_dir_child`]. Those folders get no header of their own.
+    pub chain: u8,
+}
+
+/// The only non-empty child of `id`, if there is exactly one and it is a folder.
+pub fn only_dir_child(tree: &Tree, id: NodeId, metric: Metric) -> Option<NodeId> {
+    let mut it = tree.children(id).filter(|&c| tree.node(c).size(metric) > 0);
+    let first = it.next()?;
+    if it.next().is_some() {
+        return None;
+    }
+    tree.node(first).is_dir().then_some(first)
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -154,6 +168,9 @@ pub struct LayoutOptions {
     /// Directories narrower/shorter than this are not subdivided.
     pub min_dir_side: f32,
     pub header: f32,
+    /// Folders smaller than this get no header strip (it would crowd out colour).
+    pub header_min_w: f32,
+    pub header_min_h: f32,
     pub padding: f32,
     pub max_depth: u16,
 }
@@ -165,6 +182,8 @@ impl Default for LayoutOptions {
             min_area: 12.0,
             min_dir_side: 24.0,
             header: 16.0,
+            header_min_w: 90.0,
+            header_min_h: 48.0,
             padding: 2.0,
             max_depth: 12,
         }
@@ -182,13 +201,14 @@ pub fn layout(
     opts: &LayoutOptions,
 ) -> Vec<Tile> {
     let mut tiles: Vec<Tile> = Vec::new();
-    let mut queue: VecDeque<(NodeId, Rect, u16, usize)> = VecDeque::new();
-    queue.push_back((root, bounds, 0, usize::MAX));
+    // (folder, area for its children, depth, its tile, tile whose header shows its name)
+    let mut queue: VecDeque<(NodeId, Rect, u16, usize, usize)> = VecDeque::new();
+    queue.push_back((root, bounds, 0, usize::MAX, usize::MAX));
 
-    while let Some((dir, area, depth, _)) = queue.pop_front() {
+    while let Some((dir, area, depth, _, owner)) = queue.pop_front() {
         if tiles.len() >= opts.max_tiles {
             // Out of budget: these folders will not get their children drawn.
-            for (_, _, _, t) in queue.drain(..) {
+            for (_, _, _, t, _) in queue.drain(..) {
                 tiles[t].nested = false;
             }
             break;
@@ -225,6 +245,12 @@ pub fn layout(
             sizes.push(rest_size as f64);
         }
         let rects = squarify(&sizes, area);
+        // A folder whose only content is one folder shares its header.
+        let chained = owner != usize::MAX
+            && shown.len() == 1
+            && rest_count == 0
+            && tree.node(shown[0]).is_dir();
+        let pad = if depth >= 2 { 1.0 } else { opts.padding };
 
         for (i, r) in rects.iter().enumerate() {
             if tiles.len() >= opts.max_tiles {
@@ -242,6 +268,7 @@ pub fn layout(
                     depth,
                     has_header: false,
                     nested: false,
+                    chain: 0,
                 });
                 continue;
             }
@@ -251,7 +278,8 @@ pub fn layout(
                 && depth + 1 < opts.max_depth
                 && r.w >= opts.min_dir_side
                 && r.h >= opts.min_dir_side;
-            let has_header = can_nest && r.h >= opts.header * 2.5 && r.w >= 40.0;
+            let has_header =
+                can_nest && !chained && r.h >= opts.header_min_h && r.w >= opts.header_min_w;
             let tile_index = tiles.len();
             tiles.push(Tile {
                 rect: *r,
@@ -259,17 +287,20 @@ pub fn layout(
                 depth,
                 has_header,
                 nested: false,
+                chain: 0,
             });
             if can_nest && tree.children(id).next().is_some() {
-                let top = if has_header {
-                    opts.header
+                let (inner, next_owner) = if chained {
+                    tiles[owner].chain = tiles[owner].chain.saturating_add(1);
+                    (*r, owner)
+                } else if has_header {
+                    (r.shrink(pad, opts.header, pad, pad), tile_index)
                 } else {
-                    opts.padding
+                    (r.shrink(pad, pad, pad, pad), usize::MAX)
                 };
-                let inner = r.shrink(opts.padding, top, opts.padding, opts.padding);
                 if inner.w >= 2.0 && inner.h >= 2.0 {
                     tiles[tile_index].nested = true;
-                    queue.push_back((id, inner, depth + 1, tile_index));
+                    queue.push_back((id, inner, depth + 1, tile_index, next_owner));
                 }
             }
         }
@@ -446,6 +477,48 @@ mod tests {
             .map(|t| t.rect.area())
             .sum();
         assert!(approx(top, bounds.area(), 1.0));
+    }
+
+    #[test]
+    fn single_folder_chains_share_one_header() {
+        // root/Steam/steamapps/common/{Game A, Game B}
+        let a = ScannedDir::new("Game A".into(), vec![f("a.pak", 600_000)], vec![], false);
+        let b = ScannedDir::new("Game B".into(), vec![f("b.pak", 400_000)], vec![], false);
+        let common = ScannedDir::new("common".into(), vec![], vec![a, b], false);
+        let apps = ScannedDir::new("steamapps".into(), vec![], vec![common], false);
+        let steam = ScannedDir::new("Steam".into(), vec![], vec![apps], false);
+        let other = ScannedDir::new("Other".into(), vec![f("o.bin", 500_000)], vec![], false);
+        let root = ScannedDir::new("".into(), vec![], vec![steam, other], false);
+        let t = Tree::from_scan(PathBuf::from("/r"), root, ScanStats::default());
+        let tiles = layout(
+            &t,
+            Tree::ROOT,
+            Rect::new(0.0, 0.0, 900.0, 600.0),
+            Metric::Allocated,
+            &LayoutOptions::default(),
+        );
+        let tile = |p: &str| {
+            let id = t.find(&PathBuf::from("/r").join(p)).unwrap();
+            *tiles.iter().find(|x| x.kind == TileKind::Node(id)).unwrap()
+        };
+        let steam = tile("Steam");
+        assert!(steam.has_header);
+        assert_eq!(
+            steam.chain, 2,
+            "steamapps and common are merged into Steam's header"
+        );
+        assert!(!tile("Steam/steamapps").has_header);
+        assert!(!tile("Steam/steamapps/common").has_header);
+        assert!(tile("Steam/steamapps/common/Game A").has_header);
+        let id = t.find(&PathBuf::from("/r/Steam")).unwrap();
+        let first = only_dir_child(&t, id, Metric::Allocated).unwrap();
+        assert_eq!(&*t.node(first).name, "steamapps");
+        assert!(only_dir_child(
+            &t,
+            t.find(&PathBuf::from("/r/Steam/steamapps/common")).unwrap(),
+            Metric::Allocated
+        )
+        .is_none());
     }
 
     #[test]
