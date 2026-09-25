@@ -87,12 +87,13 @@ impl Category {
             | "vmsn" | "dmg" => Category::DiskImage,
             "exe" | "dll" | "sys" | "msi" | "msp" | "com" | "scr" | "ocx" | "drv" | "efi"
             | "so" | "dylib" | "node" | "pyd" | "lib" | "a" | "pdb" => Category::Executable,
-            "rs" | "c" | "cc" | "cpp" | "h" | "hpp" | "cs" | "py" | "js" | "mjs" | "tsx" | "jsx" | "go" | "java" | "kt" | "swift" | "rb" | "php" | "lua" | "sh"
-            | "ps1" | "bat" | "cmd" | "html" | "css" | "scss" | "json" | "xml" | "yaml"
-            | "yml" | "toml" | "sql" => Category::Code,
+            "rs" | "c" | "cc" | "cpp" | "h" | "hpp" | "cs" | "py" | "js" | "mjs" | "tsx"
+            | "jsx" | "go" | "java" | "kt" | "swift" | "rb" | "php" | "lua" | "sh" | "ps1"
+            | "bat" | "cmd" | "html" | "css" | "scss" | "json" | "xml" | "yaml" | "yml"
+            | "toml" | "sql" => Category::Code,
             "db" | "sqlite" | "sqlite3" | "mdb" | "accdb" | "dat" | "bin" | "pak" | "cache"
-            | "log" | "etl" | "evtx" | "tmp" | "temp" | "bak" | "dmp" | "mdmp" | "blob"
-            | "idx" | "pack" | "vpk" | "ldb" | "edb" | "chk" => Category::Data,
+            | "log" | "etl" | "evtx" | "tmp" | "temp" | "bak" | "dmp" | "mdmp" | "blob" | "idx"
+            | "pack" | "vpk" | "ldb" | "edb" | "chk" => Category::Data,
             _ => Category::Other,
         }
     }

@@ -67,11 +67,16 @@ fn parse_args() -> Result<Args, String> {
             "-V" | "--version" => args.version = true,
             "--renderer" => {
                 let v = it.next().ok_or("--renderer needs a value")?;
-                args.renderer = Some(RendererChoice::parse(&v.to_string_lossy()).ok_or("unknown renderer")?);
+                args.renderer =
+                    Some(RendererChoice::parse(&v.to_string_lossy()).ok_or("unknown renderer")?);
             }
-            "--print-scan" => args.print_scan = Some(PathBuf::from(it.next().ok_or("--print-scan needs a path")?)),
+            "--print-scan" => {
+                args.print_scan = Some(PathBuf::from(it.next().ok_or("--print-scan needs a path")?))
+            }
             _ if s.starts_with("--renderer=") => {
-                args.renderer = Some(RendererChoice::parse(&s["--renderer=".len()..]).ok_or("unknown renderer")?);
+                args.renderer = Some(
+                    RendererChoice::parse(&s["--renderer=".len()..]).ok_or("unknown renderer")?,
+                );
             }
             _ if s.starts_with("--") => return Err(format!("unknown option {s}")),
             _ => args.path = Some(PathBuf::from(a)),
@@ -89,7 +94,7 @@ fn main() -> ExitCode {
         Ok(a) => a,
         Err(e) => {
             ops::attach_parent_console();
-            eprintln!("disktree: {e}\n\n{USAGE}");
+            out(&format!("disktree: {e}\n\n{USAGE}\n"));
             ops::message_box("disktree", &format!("{e}\n\n{USAGE}"));
             return ExitCode::from(2);
         }
@@ -97,9 +102,9 @@ fn main() -> ExitCode {
     if args.help || args.version {
         ops::attach_parent_console();
         if args.version {
-            println!("disktree {}", env!("CARGO_PKG_VERSION"));
+            out(&format!("disktree {}\n", env!("CARGO_PKG_VERSION")));
         } else {
-            println!("{USAGE}");
+            out(&format!("{USAGE}\n"));
         }
         return ExitCode::SUCCESS;
     }
@@ -110,13 +115,24 @@ fn main() -> ExitCode {
     run_gui(args)
 }
 
+/// Writes to stdout, ignoring errors (a closed pipe must not become a crash dialog).
+fn out(text: &str) {
+    use std::io::Write;
+    let mut stdout = std::io::stdout().lock();
+    let _ = stdout.write_all(text.as_bytes());
+    let _ = stdout.flush();
+}
+
 fn print_scan(path: &std::path::Path) -> ExitCode {
+    use std::fmt::Write;
     let progress = scan::Progress::default();
     match scan::scan(path, &progress, scan::default_threads()) {
         Ok(tree) => {
             let root = tree.node(Tree::ROOT);
-            println!("{}", tree.root_path.display());
-            println!(
+            let mut s = String::new();
+            let _ = writeln!(s, "{}", tree.root_path.display());
+            let _ = writeln!(
+                s,
                 "  {} on disk, {} logical, {} files, {} folders, {} links skipped, {} unreadable, {:.2} s",
                 format::bytes(root.allocated),
                 format::bytes(root.logical),
@@ -128,7 +144,8 @@ fn print_scan(path: &std::path::Path) -> ExitCode {
             );
             for c in tree.children(Tree::ROOT).take(15) {
                 let n = tree.node(c);
-                println!(
+                let _ = writeln!(
+                    s,
                     "  {:>10}  {:>6}  {}{}",
                     format::bytes(n.allocated),
                     format::percent(n.allocated, root.allocated),
@@ -137,21 +154,24 @@ fn print_scan(path: &std::path::Path) -> ExitCode {
                 );
             }
             for (p, e) in tree.stats.error_samples.iter().take(10) {
-                println!("  unreadable: {p} ({e})");
+                let _ = writeln!(s, "  unreadable: {p} ({e})");
             }
+            out(&s);
             ExitCode::SUCCESS
         }
         Err(e) => {
-            eprintln!("disktree: {e}");
+            out(&format!("disktree: {e}\n"));
             ExitCode::FAILURE
         }
     }
 }
 
 fn renderer_order(args: &Args) -> Vec<RendererChoice> {
-    let forced = args
-        .renderer
-        .or_else(|| std::env::var("DISKTREE_RENDERER").ok().and_then(|v| RendererChoice::parse(&v)));
+    let forced = args.renderer.or_else(|| {
+        std::env::var("DISKTREE_RENDERER")
+            .ok()
+            .and_then(|v| RendererChoice::parse(&v))
+    });
     if let Some(r) = forced {
         return vec![r];
     }
@@ -175,7 +195,8 @@ fn native_options(renderer: RendererChoice) -> eframe::NativeOptions {
     let mut setup = egui_wgpu::WgpuSetupCreateNew::without_display_handle();
     setup.instance_descriptor.backends = backends;
     // A 2D app: don't wake a discrete GPU on laptops.
-    setup.power_preference = wgpu::PowerPreference::from_env().unwrap_or(wgpu::PowerPreference::LowPower);
+    setup.power_preference =
+        wgpu::PowerPreference::from_env().unwrap_or(wgpu::PowerPreference::LowPower);
 
     eframe::NativeOptions {
         renderer: match renderer {
@@ -202,7 +223,10 @@ fn native_options(renderer: RendererChoice) -> eframe::NativeOptions {
 fn run_gui(args: Args) -> ExitCode {
     let mut errors: Vec<(String, String)> = Vec::new();
     for renderer in renderer_order(&args) {
-        diag::log(&format!("starting window with renderer {}", renderer.name()));
+        diag::log(&format!(
+            "starting window with renderer {}",
+            renderer.name()
+        ));
         let started = Arc::new(AtomicBool::new(false));
         let started_in_app = started.clone();
         let path = args.path.clone();

@@ -20,7 +20,17 @@ pub struct RawEntry {
     pub logical: u64,
 }
 
-pub fn read_dir(path: &Path) -> io::Result<Vec<RawEntry>> {
+/// Identity of a directory on disk: (volume serial / device, file index / inode).
+pub type DirId = (u64, u64);
+
+#[derive(Debug, Default)]
+pub struct Listing {
+    /// `None` if the file system could not tell us.
+    pub id: Option<DirId>,
+    pub entries: Vec<RawEntry>,
+}
+
+pub fn read_dir(path: &Path) -> io::Result<Listing> {
     #[cfg(windows)]
     {
         match win::read_dir(path) {
@@ -46,30 +56,35 @@ pub const IO_REPARSE_TAG_WOF: u32 = 0x8000_0017;
 
 #[cfg(windows)]
 pub mod win {
-    use super::{is_name_surrogate, RawEntry, IO_REPARSE_TAG_WOF};
+    use super::{is_name_surrogate, Listing, RawEntry, IO_REPARSE_TAG_WOF};
     use std::io;
     use std::os::windows::ffi::OsStrExt;
     use std::path::Path;
     use windows::core::PCWSTR;
     use windows::Win32::Foundation::{
-        CloseHandle, ERROR_INVALID_FUNCTION, ERROR_INVALID_PARAMETER, ERROR_NOT_SUPPORTED,
-        ERROR_NO_MORE_FILES, HANDLE, SetLastError, WIN32_ERROR,
+        CloseHandle, SetLastError, ERROR_INVALID_FUNCTION, ERROR_INVALID_PARAMETER,
+        ERROR_NOT_SUPPORTED, ERROR_NO_MORE_FILES, HANDLE, WIN32_ERROR,
     };
     use windows::Win32::Storage::FileSystem::{
-        CreateFileW, FileFullDirectoryInfo, GetCompressedFileSizeW, GetFileInformationByHandleEx,
-        FILE_ATTRIBUTE_COMPRESSED, FILE_ATTRIBUTE_DIRECTORY, FILE_ATTRIBUTE_REPARSE_POINT,
-        FILE_ATTRIBUTE_SPARSE_FILE, FILE_FLAG_BACKUP_SEMANTICS, FILE_FULL_DIR_INFO,
-        FILE_LIST_DIRECTORY, FILE_SHARE_DELETE, FILE_SHARE_READ, FILE_SHARE_WRITE,
-        INVALID_FILE_SIZE, OPEN_EXISTING,
+        CreateFileW, FileFullDirectoryInfo, GetCompressedFileSizeW, GetFileInformationByHandle,
+        GetFileInformationByHandleEx, BY_HANDLE_FILE_INFORMATION, FILE_ATTRIBUTE_COMPRESSED,
+        FILE_ATTRIBUTE_DIRECTORY, FILE_ATTRIBUTE_REPARSE_POINT, FILE_ATTRIBUTE_SPARSE_FILE,
+        FILE_FLAG_BACKUP_SEMANTICS, FILE_FULL_DIR_INFO, FILE_LIST_DIRECTORY, FILE_SHARE_DELETE,
+        FILE_SHARE_READ, FILE_SHARE_WRITE, INVALID_FILE_SIZE, OPEN_EXISTING,
     };
 
     /// `C:\x` -> `\\?\C:\x`, `\\srv\share\x` -> `\\?\UNC\srv\share\x`.
     pub fn verbatim(path: &Path) -> Vec<u16> {
         let s = path.as_os_str();
-        let wide: Vec<u16> = s.encode_wide().map(|c| if c == b'/' as u16 { b'\\' as u16 } else { c }).collect();
+        let wide: Vec<u16> = s
+            .encode_wide()
+            .map(|c| if c == b'/' as u16 { b'\\' as u16 } else { c })
+            .collect();
         let bs = b'\\' as u16;
         let mut out: Vec<u16> = Vec::with_capacity(wide.len() + 8);
-        if wide.starts_with(&[bs, bs, b'?' as u16, bs]) || wide.starts_with(&[bs, bs, b'.' as u16, bs]) {
+        if wide.starts_with(&[bs, bs, b'?' as u16, bs])
+            || wide.starts_with(&[bs, bs, b'.' as u16, bs])
+        {
             out.extend_from_slice(&wide);
         } else if wide.starts_with(&[bs, bs]) {
             out.extend(r"\\?\UNC\".encode_utf16());
@@ -110,7 +125,7 @@ pub mod win {
         }
     }
 
-    pub fn read_dir(path: &Path) -> io::Result<Vec<RawEntry>> {
+    pub fn read_dir(path: &Path) -> io::Result<Listing> {
         let dir_w = verbatim(path);
         let handle = unsafe {
             CreateFileW(
@@ -125,6 +140,16 @@ pub mod win {
         }
         .map_err(to_io)?;
         let handle = Handle(handle);
+
+        let mut info = BY_HANDLE_FILE_INFORMATION::default();
+        let id = unsafe { GetFileInformationByHandle(handle.0, &mut info) }
+            .ok()
+            .map(|_| {
+                (
+                    info.dwVolumeSerialNumber as u64,
+                    ((info.nFileIndexHigh as u64) << 32) | info.nFileIndexLow as u64,
+                )
+            });
 
         // 64 KiB, 8-byte aligned.
         let mut buf = vec![0u64; 8 * 1024];
@@ -163,10 +188,15 @@ pub mod win {
                 offset += info.NextEntryOffset as usize;
             }
         }
-        Ok(out)
+        Ok(Listing { id, entries: out })
     }
 
-    fn entry_from(_dir: &Path, dir_w: &[u16], name_w: &[u16], info: &FILE_FULL_DIR_INFO) -> RawEntry {
+    fn entry_from(
+        _dir: &Path,
+        dir_w: &[u16],
+        name_w: &[u16],
+        info: &FILE_FULL_DIR_INFO,
+    ) -> RawEntry {
         let attrs = info.FileAttributes;
         let is_dir = attrs & FILE_ATTRIBUTE_DIRECTORY.0 != 0;
         let is_reparse = attrs & FILE_ATTRIBUTE_REPARSE_POINT.0 != 0;
@@ -175,7 +205,13 @@ pub mod win {
         let is_link = is_reparse && is_name_surrogate(tag);
         let name = String::from_utf16_lossy(name_w);
         if is_link {
-            return RawEntry { name, is_dir, is_link: true, allocated: 0, logical: 0 };
+            return RawEntry {
+                name,
+                is_dir,
+                is_link: true,
+                allocated: 0,
+                logical: 0,
+            };
         }
         let logical = info.EndOfFile.max(0) as u64;
         let mut allocated = info.AllocationSize.max(0) as u64;
@@ -196,21 +232,29 @@ pub mod win {
                 SetLastError(WIN32_ERROR(0));
                 GetCompressedFileSizeW(PCWSTR(full.as_ptr()), Some(&mut high))
             };
-            if !(low == INVALID_FILE_SIZE && std::io::Error::last_os_error().raw_os_error() != Some(0)) {
+            if !(low == INVALID_FILE_SIZE
+                && std::io::Error::last_os_error().raw_os_error() != Some(0))
+            {
                 allocated = ((high as u64) << 32) | low as u64;
             }
         }
-        RawEntry { name, is_dir, is_link: false, allocated, logical }
+        RawEntry {
+            name,
+            is_dir,
+            is_link: false,
+            allocated,
+            logical,
+        }
     }
 }
 
 pub mod portable {
-    use super::RawEntry;
+    use super::{DirId, Listing, RawEntry};
     use std::fs;
     use std::io;
     use std::path::Path;
 
-    pub fn read_dir(path: &Path) -> io::Result<Vec<RawEntry>> {
+    pub fn read_dir(path: &Path) -> io::Result<Listing> {
         let mut out = Vec::new();
         for entry in fs::read_dir(path)? {
             let entry = match entry {
@@ -243,7 +287,21 @@ pub mod portable {
                 logical,
             });
         }
-        Ok(out)
+        Ok(Listing {
+            id: dir_id(path),
+            entries: out,
+        })
+    }
+
+    #[cfg(unix)]
+    fn dir_id(path: &Path) -> Option<DirId> {
+        use std::os::unix::fs::MetadataExt;
+        fs::metadata(path).ok().map(|m| (m.dev(), m.ino()))
+    }
+
+    #[cfg(not(unix))]
+    fn dir_id(_path: &Path) -> Option<DirId> {
+        None
     }
 
     #[cfg(windows)]
@@ -283,7 +341,10 @@ mod tests {
         const IO_REPARSE_TAG_APPEXECLINK: u32 = 0x8000_001B;
         assert!(is_name_surrogate(IO_REPARSE_TAG_MOUNT_POINT));
         assert!(is_name_surrogate(IO_REPARSE_TAG_SYMLINK));
-        assert!(!is_name_surrogate(IO_REPARSE_TAG_CLOUD_6), "OneDrive folders must be scanned");
+        assert!(
+            !is_name_surrogate(IO_REPARSE_TAG_CLOUD_6),
+            "OneDrive folders must be scanned"
+        );
         assert!(!is_name_surrogate(IO_REPARSE_TAG_DEDUP));
         assert!(!is_name_surrogate(IO_REPARSE_TAG_WOF));
         assert!(!is_name_surrogate(IO_REPARSE_TAG_APPEXECLINK));
@@ -296,7 +357,11 @@ mod tests {
         std::fs::write(tmp.path().join("f.bin"), vec![1u8; 10_000]).unwrap();
         std::fs::create_dir(tmp.path().join("sub")).unwrap();
         std::os::unix::fs::symlink(tmp.path().join("sub"), tmp.path().join("link")).unwrap();
-        let mut entries = read_dir(tmp.path()).unwrap();
+        let listing = read_dir(tmp.path()).unwrap();
+        assert!(listing.id.is_some());
+        assert_eq!(read_dir(tmp.path()).unwrap().id, listing.id);
+        assert_ne!(read_dir(&tmp.path().join("sub")).unwrap().id, listing.id);
+        let mut entries = listing.entries;
         entries.sort_by(|a, b| a.name.cmp(&b.name));
         let names: Vec<_> = entries.iter().map(|e| e.name.as_str()).collect();
         assert_eq!(names, vec!["f.bin", "link", "sub"]);

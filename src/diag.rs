@@ -40,7 +40,10 @@ pub fn init() {
             started: Instant::now(),
         });
     }
-    let secs = SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
+    let secs = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
     log(&format!(
         "disktree {} ({} {}) starting, unix time {secs}, exe {:?}",
         env!("CARGO_PKG_VERSION"),
@@ -72,10 +75,15 @@ pub fn log(msg: &str) {
 pub fn recent() -> String {
     LOG.lock()
         .ok()
-        .and_then(|g| g.as_ref().map(|l| l.recent.iter().cloned().collect::<Vec<_>>().join("\n")))
+        .and_then(|g| {
+            g.as_ref()
+                .map(|l| l.recent.iter().cloned().collect::<Vec<_>>().join("\n"))
+        })
         .unwrap_or_default()
 }
 
 pub fn path() -> Option<PathBuf> {
-    LOG.lock().ok().and_then(|g| g.as_ref().and_then(|l| l.path.clone()))
+    LOG.lock()
+        .ok()
+        .and_then(|g| g.as_ref().and_then(|l| l.path.clone()))
 }

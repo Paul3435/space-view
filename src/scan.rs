@@ -7,9 +7,10 @@
 //! loops and nothing is counted twice. Unreadable directories are counted and
 //! sampled, never fatal. The whole scan can be cancelled at any time.
 
-use crate::fsread::{self, RawEntry};
+use crate::fsread::{self, DirId, RawEntry};
 use crate::tree::{ScanStats, ScannedDir, ScannedFile, Tree};
 use rayon::prelude::*;
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Mutex;
@@ -53,7 +54,10 @@ impl Progress {
     }
 
     fn take_errors(&self) -> Vec<(String, String)> {
-        self.errors.lock().map(|mut v| std::mem::take(&mut *v)).unwrap_or_default()
+        self.errors
+            .lock()
+            .map(|mut v| std::mem::take(&mut *v))
+            .unwrap_or_default()
     }
 }
 
@@ -84,9 +88,43 @@ impl std::fmt::Display for ScanError {
     }
 }
 
+/// Directories already visited in this scan, by on-disk identity. A second
+/// path to the same directory (a link the file system reported as a plain
+/// folder, e.g. some network redirectors, or a loop) is treated as a link.
+pub struct Visited {
+    shards: Vec<Mutex<HashSet<DirId>>>,
+}
+
+impl Default for Visited {
+    fn default() -> Self {
+        Visited {
+            shards: (0..64).map(|_| Mutex::new(HashSet::new())).collect(),
+        }
+    }
+}
+
+impl Visited {
+    /// Returns `true` the first time `id` is seen.
+    pub fn first_visit(&self, id: DirId) -> bool {
+        let shard =
+            ((id.0 ^ id.1.rotate_left(17)).wrapping_mul(0x9E37_79B9_7F4A_7C15) >> 58) as usize;
+        self.shards[shard]
+            .lock()
+            .map(|mut s| s.insert(id))
+            .unwrap_or(true)
+    }
+}
+
+struct Walk<'a> {
+    progress: &'a Progress,
+    visited: Visited,
+}
+
 /// Number of scanner threads: directory reads block on I/O, so oversubscribe.
 pub fn default_threads() -> usize {
-    let cores = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(4);
+    let cores = std::thread::available_parallelism()
+        .map(|n| n.get())
+        .unwrap_or(4);
     (cores * 4).clamp(8, 64)
 }
 
@@ -95,12 +133,22 @@ pub fn normalize_root(path: &Path) -> PathBuf {
     let abs = std::path::absolute(path).unwrap_or_else(|_| path.to_path_buf());
     #[cfg(windows)]
     {
+        let s = abs.to_string_lossy().replace('/', "\\");
+        // Shell APIs (delete, reveal) don't accept \\?\ paths; the scanner adds it itself.
+        let s = if let Some(rest) = s.strip_prefix(r"\\?\UNC\") {
+            format!(r"\\{rest}")
+        } else if let Some(rest) = s.strip_prefix(r"\\?\") {
+            rest.to_owned()
+        } else {
+            s
+        };
         // A bare drive letter ("C:") means "current dir on C:"; users mean the root.
-        let s = abs.to_string_lossy();
         if s.len() == 2 && s.ends_with(':') {
             return PathBuf::from(format!("{s}\\"));
         }
+        return PathBuf::from(s);
     }
+    #[cfg(not(windows))]
     abs
 }
 
@@ -122,7 +170,11 @@ pub fn scan(root: &Path, progress: &Progress, threads: usize) -> Result<Tree, Sc
 
 /// Scans one directory subtree (used for full scans and for refreshing a
 /// folder after a partial delete).
-pub fn scan_subtree(root: &Path, progress: &Progress, threads: usize) -> Result<ScannedDir, ScanError> {
+pub fn scan_subtree(
+    root: &Path,
+    progress: &Progress,
+    threads: usize,
+) -> Result<ScannedDir, ScanError> {
     let meta = std::fs::metadata(root)
         .map_err(|e| ScanError::Unreadable(root.to_path_buf(), describe(&e)))?;
     if !meta.is_dir() {
@@ -130,6 +182,10 @@ pub fn scan_subtree(root: &Path, progress: &Progress, threads: usize) -> Result<
     }
     // Probe the root so an unreadable root is an error rather than an empty tree.
     fsread::read_dir(root).map_err(|e| ScanError::Unreadable(root.to_path_buf(), describe(&e)))?;
+    let walk = Walk {
+        progress,
+        visited: Visited::default(),
+    };
 
     let pool = rayon::ThreadPoolBuilder::new()
         .num_threads(threads.max(1))
@@ -141,7 +197,7 @@ pub fn scan_subtree(root: &Path, progress: &Progress, threads: usize) -> Result<
         .map_err(|e| ScanError::Internal(e.to_string()))?;
 
     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        pool.install(|| scan_dir(root, Box::from(""), progress))
+        pool.install(|| scan_dir(root, Box::from(""), &walk))
     }));
     match result {
         Ok(dir) if progress.is_cancelled() => {
@@ -163,7 +219,8 @@ pub fn panic_message(panic: &Box<dyn std::any::Any + Send>) -> String {
     }
 }
 
-fn scan_dir(path: &Path, name: Box<str>, progress: &Progress) -> ScannedDir {
+fn scan_dir(path: &Path, name: Box<str>, walk: &Walk) -> ScannedDir {
+    let progress = walk.progress;
     if progress.is_cancelled() {
         return ScannedDir::new(name, Vec::new(), Vec::new(), false);
     }
@@ -175,7 +232,15 @@ fn scan_dir(path: &Path, name: Box<str>, progress: &Progress) -> ScannedDir {
     }
 
     let entries = match fsread::read_dir(path) {
-        Ok(e) => e,
+        Ok(listing) => {
+            if let Some(id) = listing.id {
+                if !walk.visited.first_visit(id) {
+                    progress.links.fetch_add(1, Ordering::Relaxed);
+                    return ScannedDir::alias(name);
+                }
+            }
+            listing.entries
+        }
         Err(err) => {
             progress.record_error(path, &err);
             return ScannedDir::new(name, Vec::new(), Vec::new(), true);
@@ -186,16 +251,33 @@ fn scan_dir(path: &Path, name: Box<str>, progress: &Progress) -> ScannedDir {
     let mut subdirs: Vec<String> = Vec::new();
     let mut allocated = 0u64;
     let mut file_count = 0u64;
-    for RawEntry { name, is_dir, is_link, allocated: a, logical } in entries {
+    for RawEntry {
+        name,
+        is_dir,
+        is_link,
+        allocated: a,
+        logical,
+    } in entries
+    {
         if is_link {
             progress.links.fetch_add(1, Ordering::Relaxed);
-            files.push(ScannedFile { name: name.into(), allocated: 0, logical: 0, is_link: true });
+            files.push(ScannedFile {
+                name: name.into(),
+                allocated: 0,
+                logical: 0,
+                is_link: true,
+            });
         } else if is_dir {
             subdirs.push(name);
         } else {
             allocated += a;
             file_count += 1;
-            files.push(ScannedFile { name: name.into(), allocated: a, logical, is_link: false });
+            files.push(ScannedFile {
+                name: name.into(),
+                allocated: a,
+                logical,
+                is_link: false,
+            });
         }
     }
     progress.files.fetch_add(file_count, Ordering::Relaxed);
@@ -203,11 +285,11 @@ fn scan_dir(path: &Path, name: Box<str>, progress: &Progress) -> ScannedDir {
 
     let dirs: Vec<ScannedDir> = if subdirs.len() == 1 {
         let n = subdirs.pop().unwrap();
-        vec![scan_dir(&path.join(&n), n.into(), progress)]
+        vec![scan_dir(&path.join(&n), n.into(), walk)]
     } else {
         subdirs
             .into_par_iter()
-            .map(|n| scan_dir(&path.join(&n), n.into(), progress))
+            .map(|n| scan_dir(&path.join(&n), n.into(), walk))
             .collect()
     };
     ScannedDir::new(name, files, dirs, false)
@@ -266,7 +348,11 @@ mod tests {
 
         let p = Progress::default();
         let t = scan(r, &p, 4).unwrap();
-        assert_eq!(t.node(Tree::ROOT).logical, 50_000, "counted once, under its real path");
+        assert_eq!(
+            t.node(Tree::ROOT).logical,
+            50_000,
+            "counted once, under its real path"
+        );
         let alias = t.find(&r.join("alias")).unwrap();
         assert_eq!(t.node(alias).kind, NodeKind::Link);
         assert_eq!(t.stats.links, 2);
@@ -298,6 +384,37 @@ mod tests {
     }
 
     #[test]
+    fn visited_set_detects_repeats() {
+        let v = Visited::default();
+        assert!(v.first_visit((1, 42)));
+        assert!(
+            v.first_visit((2, 42)),
+            "same index on another volume is different"
+        );
+        assert!(!v.first_visit((1, 42)));
+        for i in 0..10_000u64 {
+            assert!(v.first_visit((7, i)));
+        }
+        assert!(!v.first_visit((7, 9_999)));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn same_directory_reached_twice_is_counted_once() {
+        let tmp = tempfile::tempdir().unwrap();
+        write(&tmp.path().join("f"), 10);
+        let p = Progress::default();
+        let walk = Walk {
+            progress: &p,
+            visited: Visited::default(),
+        };
+        let first = scan_dir(tmp.path(), "a".into(), &walk);
+        let second = scan_dir(tmp.path(), "b".into(), &walk);
+        assert!(!first.alias && first.logical == 10);
+        assert!(second.alias && second.logical == 0);
+    }
+
+    #[test]
     fn cancel_stops_the_scan() {
         let tmp = tempfile::tempdir().unwrap();
         fs::create_dir(tmp.path().join("x")).unwrap();
@@ -311,8 +428,14 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         write(&tmp.path().join("f"), 1);
         let p = Progress::default();
-        assert!(matches!(scan(&tmp.path().join("f"), &p, 2), Err(ScanError::NotADirectory(_))));
-        assert!(matches!(scan(&tmp.path().join("missing"), &p, 2), Err(ScanError::Unreadable(..))));
+        assert!(matches!(
+            scan(&tmp.path().join("f"), &p, 2),
+            Err(ScanError::NotADirectory(_))
+        ));
+        assert!(matches!(
+            scan(&tmp.path().join("missing"), &p, 2),
+            Err(ScanError::Unreadable(..))
+        ));
     }
 
     #[test]

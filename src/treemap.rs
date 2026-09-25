@@ -13,7 +13,12 @@ pub struct Rect {
 
 impl Rect {
     pub fn new(x: f32, y: f32, w: f32, h: f32) -> Rect {
-        Rect { x, y, w: w.max(0.0), h: h.max(0.0) }
+        Rect {
+            x,
+            y,
+            w: w.max(0.0),
+            h: h.max(0.0),
+        }
     }
     pub fn area(&self) -> f32 {
         self.w * self.h
@@ -22,7 +27,12 @@ impl Rect {
         px >= self.x && py >= self.y && px < self.x + self.w && py < self.y + self.h
     }
     pub fn shrink(&self, left: f32, top: f32, right: f32, bottom: f32) -> Rect {
-        Rect::new(self.x + left, self.y + top, self.w - left - right, self.h - top - bottom)
+        Rect::new(
+            self.x + left,
+            self.y + top,
+            self.w - left - right,
+            self.h - top - bottom,
+        )
     }
 }
 
@@ -39,7 +49,12 @@ pub fn squarify(sizes: &[f64], bounds: Rect) -> Vec<Rect> {
     let scale = (bounds.w as f64 * bounds.h as f64) / total;
     let areas: Vec<f64> = sizes.iter().map(|s| s * scale).collect();
 
-    let (mut x, mut y, mut w, mut h) = (bounds.x as f64, bounds.y as f64, bounds.w as f64, bounds.h as f64);
+    let (mut x, mut y, mut w, mut h) = (
+        bounds.x as f64,
+        bounds.y as f64,
+        bounds.w as f64,
+        bounds.h as f64,
+    );
     let mut start = 0;
     while start < areas.len() {
         let side = w.min(h);
@@ -63,7 +78,11 @@ pub fn squarify(sizes: &[f64], bounds: Rect) -> Vec<Rect> {
             let col_w = if last_row { w } else { (row_sum / h).min(w) };
             let mut cy = y;
             for (i, &a) in areas[start..end].iter().enumerate() {
-                let ih = if i + 1 == end - start { y + h - cy } else { a / col_w };
+                let ih = if i + 1 == end - start {
+                    y + h - cy
+                } else {
+                    a / col_w
+                };
                 out.push(Rect::new(x as f32, cy as f32, col_w as f32, ih as f32));
                 cy += ih;
             }
@@ -74,7 +93,11 @@ pub fn squarify(sizes: &[f64], bounds: Rect) -> Vec<Rect> {
             let row_h = if last_row { h } else { (row_sum / w).min(h) };
             let mut cx = x;
             for (i, &a) in areas[start..end].iter().enumerate() {
-                let iw = if i + 1 == end - start { x + w - cx } else { a / row_h };
+                let iw = if i + 1 == end - start {
+                    x + w - cx
+                } else {
+                    a / row_h
+                };
                 out.push(Rect::new(cx as f32, y as f32, iw as f32, row_h as f32));
                 cx += iw;
             }
@@ -102,7 +125,11 @@ pub enum TileKind {
     /// A file, link, or a directory drawn as a frame around its children.
     Node(NodeId),
     /// Children of a directory too small to draw individually, aggregated.
-    Rest { parent: NodeId, count: u32, size: u64 },
+    Rest {
+        parent: NodeId,
+        count: u32,
+        size: u64,
+    },
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -143,7 +170,13 @@ impl Default for LayoutOptions {
 /// Nested layout of the subtree under `root` (which itself is not drawn).
 /// Tiles are emitted breadth-first, so a later tile is always on top of an
 /// earlier one: hit-testing should pick the last tile containing the point.
-pub fn layout(tree: &Tree, root: NodeId, bounds: Rect, metric: Metric, opts: &LayoutOptions) -> Vec<Tile> {
+pub fn layout(
+    tree: &Tree,
+    root: NodeId,
+    bounds: Rect,
+    metric: Metric,
+    opts: &LayoutOptions,
+) -> Vec<Tile> {
     let mut tiles = Vec::new();
     let mut queue: VecDeque<(NodeId, Rect, u16)> = VecDeque::new();
     queue.push_back((root, bounds, 0));
@@ -188,7 +221,11 @@ pub fn layout(tree: &Tree, root: NodeId, bounds: Rect, metric: Metric, opts: &La
             if i == shown.len() {
                 tiles.push(Tile {
                     rect: *r,
-                    kind: TileKind::Rest { parent: dir, count: rest_count, size: rest_size },
+                    kind: TileKind::Rest {
+                        parent: dir,
+                        count: rest_count,
+                        size: rest_size,
+                    },
                     depth,
                     has_header: false,
                 });
@@ -201,9 +238,18 @@ pub fn layout(tree: &Tree, root: NodeId, bounds: Rect, metric: Metric, opts: &La
                 && r.w >= opts.min_dir_side
                 && r.h >= opts.min_dir_side;
             let has_header = can_nest && r.h >= opts.header * 2.5 && r.w >= 40.0;
-            tiles.push(Tile { rect: *r, kind: TileKind::Node(id), depth, has_header });
+            tiles.push(Tile {
+                rect: *r,
+                kind: TileKind::Node(id),
+                depth,
+                has_header,
+            });
             if can_nest && tree.children(id).next().is_some() {
-                let top = if has_header { opts.header } else { opts.padding };
+                let top = if has_header {
+                    opts.header
+                } else {
+                    opts.padding
+                };
                 let inner = r.shrink(opts.padding, top, opts.padding, opts.padding);
                 if inner.w >= 2.0 && inner.h >= 2.0 {
                     queue.push_back((id, inner, depth + 1));
@@ -231,7 +277,10 @@ mod tests {
 
     fn overlaps(a: &Rect, b: &Rect) -> bool {
         let eps = 1e-3;
-        a.x + eps < b.x + b.w && b.x + eps < a.x + a.w && a.y + eps < b.y + b.h && b.y + eps < a.y + a.h
+        a.x + eps < b.x + b.w
+            && b.x + eps < a.x + a.w
+            && a.y + eps < b.y + b.h
+            && b.y + eps < a.y + a.h
     }
 
     fn check_partition(sizes: &[f64], bounds: Rect) -> Vec<Rect> {
@@ -241,7 +290,12 @@ mod tests {
         let mut area_sum = 0.0;
         for (r, s) in rects.iter().zip(sizes) {
             let expected = (*s / total) as f32 * bounds.area();
-            assert!(approx(r.area(), expected, expected * 1e-3 + 1e-2), "area {} vs {}", r.area(), expected);
+            assert!(
+                approx(r.area(), expected, expected * 1e-3 + 1e-2),
+                "area {} vs {}",
+                r.area(),
+                expected
+            );
             assert!(r.x >= bounds.x - 1e-3 && r.y >= bounds.y - 1e-3);
             assert!(r.x + r.w <= bounds.x + bounds.w + 1e-2);
             assert!(r.y + r.h <= bounds.y + bounds.h + 1e-2);
@@ -250,7 +304,12 @@ mod tests {
         assert!(approx(area_sum, bounds.area(), bounds.area() * 1e-4));
         for i in 0..rects.len() {
             for j in i + 1..rects.len() {
-                assert!(!overlaps(&rects[i], &rects[j]), "{:?} overlaps {:?}", rects[i], rects[j]);
+                assert!(
+                    !overlaps(&rects[i], &rects[j]),
+                    "{:?} overlaps {:?}",
+                    rects[i],
+                    rects[j]
+                );
             }
         }
         rects
@@ -265,7 +324,10 @@ mod tests {
     #[test]
     fn classic_paper_example() {
         // The example from the squarified treemap paper: 6x4 with 6,6,4,3,2,2,1.
-        let rects = check_partition(&[6.0, 6.0, 4.0, 3.0, 2.0, 2.0, 1.0], Rect::new(0.0, 0.0, 6.0, 4.0));
+        let rects = check_partition(
+            &[6.0, 6.0, 4.0, 3.0, 2.0, 2.0, 1.0],
+            Rect::new(0.0, 0.0, 6.0, 4.0),
+        );
         // First row is the two 6s stacked in a 3-wide column.
         assert!(approx(rects[0].w, 3.0, 1e-4) && approx(rects[0].h, 2.0, 1e-4));
         assert!(approx(rects[1].w, 3.0, 1e-4) && approx(rects[1].y, 2.0, 1e-4));
@@ -294,7 +356,12 @@ mod tests {
     }
 
     fn f(name: &str, size: u64) -> ScannedFile {
-        ScannedFile { name: name.into(), allocated: size, logical: size / 2, is_link: false }
+        ScannedFile {
+            name: name.into(),
+            allocated: size,
+            logical: size / 2,
+            is_link: false,
+        }
     }
 
     fn sample_tree() -> Tree {
@@ -303,9 +370,19 @@ mod tests {
             many.push(f(&format!("tiny{i}"), 1));
         }
         let small = ScannedDir::new("small".into(), many, vec![], false);
-        let inner = ScannedDir::new("inner".into(), vec![f("x.mkv", 400_000), f("y.mkv", 200_000)], vec![], false);
+        let inner = ScannedDir::new(
+            "inner".into(),
+            vec![f("x.mkv", 400_000), f("y.mkv", 200_000)],
+            vec![],
+            false,
+        );
         let big = ScannedDir::new("big".into(), vec![f("z.iso", 300_000)], vec![inner], false);
-        let root = ScannedDir::new("".into(), vec![f("a.zip", 100_000)], vec![big, small], false);
+        let root = ScannedDir::new(
+            "".into(),
+            vec![f("a.zip", 100_000)],
+            vec![big, small],
+            false,
+        );
         Tree::from_scan(PathBuf::from("/r"), root, ScanStats::default())
     }
 
@@ -313,15 +390,30 @@ mod tests {
     fn nested_layout_places_children_inside_parents() {
         let t = sample_tree();
         let bounds = Rect::new(0.0, 0.0, 1000.0, 700.0);
-        let tiles = layout(&t, Tree::ROOT, bounds, Metric::Allocated, &LayoutOptions::default());
+        let tiles = layout(
+            &t,
+            Tree::ROOT,
+            bounds,
+            Metric::Allocated,
+            &LayoutOptions::default(),
+        );
         let find = |name: &str| {
             let id = t.find(&PathBuf::from("/r").join(name)).unwrap();
-            tiles.iter().find(|tile| tile.kind == TileKind::Node(id)).copied().unwrap()
+            tiles
+                .iter()
+                .find(|tile| tile.kind == TileKind::Node(id))
+                .copied()
+                .unwrap()
         };
         let big = find("big");
         let inner = find("big/inner");
         let x = find("big/inner/x.mkv");
-        let inside = |a: &Rect, b: &Rect| a.x >= b.x && a.y >= b.y && a.x + a.w <= b.x + b.w + 1e-2 && a.y + a.h <= b.y + b.h + 1e-2;
+        let inside = |a: &Rect, b: &Rect| {
+            a.x >= b.x
+                && a.y >= b.y
+                && a.x + a.w <= b.x + b.w + 1e-2
+                && a.y + a.h <= b.y + b.h + 1e-2
+        };
         assert!(inside(&inner.rect, &big.rect));
         assert!(inside(&x.rect, &inner.rect));
         assert_eq!(big.depth, 0);
@@ -330,31 +422,66 @@ mod tests {
         let hit = hit_test(&tiles, x.rect.x + x.rect.w / 2.0, x.rect.y + x.rect.h / 2.0).unwrap();
         assert_eq!(tiles[hit].kind, x.kind);
         // Top-level tiles cover the whole bounds in proportion to size.
-        let top: f32 = tiles.iter().filter(|t| t.depth == 0).map(|t| t.rect.area()).sum();
+        let top: f32 = tiles
+            .iter()
+            .filter(|t| t.depth == 0)
+            .map(|t| t.rect.area())
+            .sum();
         assert!(approx(top, bounds.area(), 1.0));
     }
 
     #[test]
     fn tiny_items_are_aggregated_into_a_rest_tile() {
         let t = sample_tree();
-        let tiles = layout(&t, Tree::ROOT, Rect::new(0.0, 0.0, 1000.0, 700.0), Metric::Allocated, &LayoutOptions::default());
+        let tiles = layout(
+            &t,
+            Tree::ROOT,
+            Rect::new(0.0, 0.0, 1000.0, 700.0),
+            Metric::Allocated,
+            &LayoutOptions::default(),
+        );
         let small = t.find(&PathBuf::from("/r/small")).unwrap();
         // "small" is 5000 bytes of ~1 MB (a ~59px square); each 1-byte file is far below min_area.
         let rest = tiles
             .iter()
             .find(|tile| matches!(tile.kind, TileKind::Rest { parent, .. } if parent == small))
             .expect("rest tile for the tiny files");
-        assert_eq!(rest.kind, TileKind::Rest { parent: small, count: 5000, size: 5000 });
-        assert!(tiles.len() < 100, "tiny files must not produce thousands of tiles");
+        assert_eq!(
+            rest.kind,
+            TileKind::Rest {
+                parent: small,
+                count: 5000,
+                size: 5000
+            }
+        );
+        assert!(
+            tiles.len() < 100,
+            "tiny files must not produce thousands of tiles"
+        );
     }
 
     #[test]
     fn respects_tile_budget_and_metric() {
         let t = sample_tree();
-        let opts = LayoutOptions { max_tiles: 3, ..LayoutOptions::default() };
-        let tiles = layout(&t, Tree::ROOT, Rect::new(0.0, 0.0, 1000.0, 700.0), Metric::Logical, &opts);
+        let opts = LayoutOptions {
+            max_tiles: 3,
+            ..LayoutOptions::default()
+        };
+        let tiles = layout(
+            &t,
+            Tree::ROOT,
+            Rect::new(0.0, 0.0, 1000.0, 700.0),
+            Metric::Logical,
+            &opts,
+        );
         assert!(tiles.len() <= 3);
-        let empty = layout(&t, Tree::ROOT, Rect::new(0.0, 0.0, 0.0, 0.0), Metric::Allocated, &LayoutOptions::default());
+        let empty = layout(
+            &t,
+            Tree::ROOT,
+            Rect::new(0.0, 0.0, 0.0, 0.0),
+            Metric::Allocated,
+            &LayoutOptions::default(),
+        );
         assert!(empty.is_empty());
     }
 }

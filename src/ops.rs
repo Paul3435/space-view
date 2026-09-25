@@ -62,8 +62,13 @@ fn platform_delete(path: &Path, mode: DeleteMode, _owner: isize) -> Result<(), D
             "Moving to the Recycle Bin is only supported on Windows.".to_owned(),
         )),
         DeleteMode::Permanent => {
-            let meta = std::fs::symlink_metadata(path).map_err(|e| DeleteError::Other(e.to_string()))?;
-            let r = if meta.is_dir() { std::fs::remove_dir_all(path) } else { std::fs::remove_file(path) };
+            let meta =
+                std::fs::symlink_metadata(path).map_err(|e| DeleteError::Other(e.to_string()))?;
+            let r = if meta.is_dir() {
+                std::fs::remove_dir_all(path)
+            } else {
+                std::fs::remove_file(path)
+            };
             r.map_err(|e| DeleteError::Other(e.to_string()))
         }
     }
@@ -82,8 +87,13 @@ fn platform_delete(path: &Path, mode: DeleteMode, owner: isize) -> Result<(), De
             )),
             // std uses \\?\ paths internally and never follows junctions.
             DeleteMode::Permanent => {
-                let meta = std::fs::symlink_metadata(path).map_err(|e| DeleteError::Other(e.to_string()))?;
-                let r = if meta.is_dir() { std::fs::remove_dir_all(path) } else { std::fs::remove_file(path) };
+                let meta = std::fs::symlink_metadata(path)
+                    .map_err(|e| DeleteError::Other(e.to_string()))?;
+                let r = if meta.is_dir() {
+                    std::fs::remove_dir_all(path)
+                } else {
+                    std::fs::remove_file(path)
+                };
                 r.map_err(|e| DeleteError::Other(e.to_string()))
             }
         };
@@ -118,7 +128,11 @@ fn reveal_blocking(path: &Path) {
 
 #[cfg(not(windows))]
 fn reveal_blocking(path: &Path) {
-    let dir = if path.is_dir() { path } else { path.parent().unwrap_or(path) };
+    let dir = if path.is_dir() {
+        path
+    } else {
+        path.parent().unwrap_or(path)
+    };
     let _ = std::process::Command::new("xdg-open").arg(dir).spawn();
 }
 
@@ -171,7 +185,9 @@ pub fn message_box(title: &str, text: &str) {
 pub fn quiet_critical_errors() {
     #[cfg(windows)]
     unsafe {
-        use windows::Win32::System::Diagnostics::Debug::{SetErrorMode, SEM_FAILCRITICALERRORS, SEM_NOOPENFILEERRORBOX};
+        use windows::Win32::System::Diagnostics::Debug::{
+            SetErrorMode, SEM_FAILCRITICALERRORS, SEM_NOOPENFILEERRORBOX,
+        };
         SetErrorMode(SEM_FAILCRITICALERRORS | SEM_NOOPENFILEERRORBOX);
     }
 }
@@ -192,17 +208,23 @@ mod win {
     use std::path::PathBuf;
     use windows::core::{BOOL, HSTRING, PCWSTR};
     use windows::Win32::Foundation::{ERROR_CANCELLED, HWND};
-    use windows::Win32::Storage::FileSystem::{GetDiskFreeSpaceExW, GetDriveTypeW, GetLogicalDrives, GetVolumeInformationW};
+    use windows::Win32::Storage::FileSystem::{
+        GetDiskFreeSpaceExW, GetDriveTypeW, GetLogicalDrives, GetVolumeInformationW,
+    };
     use windows::Win32::System::Com::{
-        CoCreateInstance, CoInitializeEx, CoUninitialize, CLSCTX_ALL, COINIT_APARTMENTTHREADED, COINIT_DISABLE_OLE1DDE,
+        CoCreateInstance, CoInitializeEx, CoUninitialize, CLSCTX_ALL, COINIT_APARTMENTTHREADED,
+        COINIT_DISABLE_OLE1DDE,
     };
     use windows::Win32::UI::Shell::Common::ITEMIDLIST;
     use windows::Win32::UI::Shell::{
-        FileOperation, IFileOperation, IShellItem, ILFree, SHCreateItemFromParsingName, SHFileOperationW,
-        SHOpenFolderAndSelectItems, SHParseDisplayName, FOFX_RECYCLEONDELETE, FOF_ALLOWUNDO, FOF_NOCONFIRMATION,
-        FOF_NOCONFIRMMKDIR, FOF_WANTNUKEWARNING, FO_DELETE, SHFILEOPSTRUCTW,
+        FileOperation, IFileOperation, ILFree, IShellItem, SHCreateItemFromParsingName,
+        SHFileOperationW, SHOpenFolderAndSelectItems, SHParseDisplayName, FOFX_RECYCLEONDELETE,
+        FOF_ALLOWUNDO, FOF_NOCONFIRMATION, FOF_NOCONFIRMMKDIR, FOF_WANTNUKEWARNING, FO_DELETE,
+        SHFILEOPSTRUCTW,
     };
-    use windows::Win32::UI::WindowsAndMessaging::{MessageBoxW, MB_ICONERROR, MB_OK, MB_SETFOREGROUND, MB_TOPMOST};
+    use windows::Win32::UI::WindowsAndMessaging::{
+        MessageBoxW, MB_ICONERROR, MB_OK, MB_SETFOREGROUND, MB_TOPMOST,
+    };
 
     const DRIVE_FIXED: u32 = 3;
     // COPYENGINE_E_USER_CANCELLED
@@ -211,7 +233,8 @@ mod win {
     struct Com(bool);
     impl Com {
         fn init() -> Com {
-            let hr = unsafe { CoInitializeEx(None, COINIT_APARTMENTTHREADED | COINIT_DISABLE_OLE1DDE) };
+            let hr =
+                unsafe { CoInitializeEx(None, COINIT_APARTMENTTHREADED | COINIT_DISABLE_OLE1DDE) };
             Com(hr.is_ok())
         }
     }
@@ -233,7 +256,11 @@ mod win {
         HWND(owner as *mut core::ffi::c_void)
     }
 
-    pub fn ifileoperation_delete(path: &str, mode: DeleteMode, owner: isize) -> Result<(), ComError> {
+    pub fn ifileoperation_delete(
+        path: &str,
+        mode: DeleteMode,
+        owner: isize,
+    ) -> Result<(), ComError> {
         let _com = Com::init();
         unsafe {
             let op: IFileOperation = CoCreateInstance(&FileOperation, None, CLSCTX_ALL)
@@ -242,17 +269,25 @@ mod win {
             if mode == DeleteMode::RecycleBin {
                 flags = flags | FOF_ALLOWUNDO | FOFX_RECYCLEONDELETE | FOF_WANTNUKEWARNING;
             }
-            op.SetOperationFlags(flags).map_err(|_| ComError::Unavailable)?;
+            op.SetOperationFlags(flags)
+                .map_err(|_| ComError::Unavailable)?;
             if owner != 0 {
                 let _ = op.SetOwnerWindow(owner_hwnd(owner));
             }
             let item: IShellItem = SHCreateItemFromParsingName(&HSTRING::from(path), None)
                 .map_err(|e| ComError::Failed(format!("Cannot open {path}: {}", e.message())))?;
-            op.DeleteItem(&item, None).map_err(|e| ComError::Failed(e.message()))?;
+            op.DeleteItem(&item, None)
+                .map_err(|e| ComError::Failed(e.message()))?;
             let performed = op.PerformOperations();
-            let aborted = op.GetAnyOperationsAborted().map(|b| b.as_bool()).unwrap_or(false);
+            let aborted = op
+                .GetAnyOperationsAborted()
+                .map(|b| b.as_bool())
+                .unwrap_or(false);
             match performed {
-                Err(e) if e.code().0 == COPYENGINE_E_USER_CANCELLED || e.code() == ERROR_CANCELLED.to_hresult() => {
+                Err(e)
+                    if e.code().0 == COPYENGINE_E_USER_CANCELLED
+                        || e.code() == ERROR_CANCELLED.to_hresult() =>
+                {
                     Err(ComError::Cancelled)
                 }
                 Err(e) => Err(ComError::Failed(e.message())),
@@ -263,7 +298,11 @@ mod win {
     }
 
     /// Fallback for systems where IFileOperation is unavailable.
-    pub fn shfileoperation_delete(path: &str, mode: DeleteMode, owner: isize) -> Result<(), DeleteError> {
+    pub fn shfileoperation_delete(
+        path: &str,
+        mode: DeleteMode,
+        owner: isize,
+    ) -> Result<(), DeleteError> {
         // pFrom is a double-NUL-terminated list.
         let mut from: Vec<u16> = path.encode_utf16().collect();
         from.push(0);
@@ -287,7 +326,9 @@ mod win {
             return Err(DeleteError::Cancelled);
         }
         if rc != 0 {
-            return Err(DeleteError::Other(format!("The shell reported error 0x{rc:X}")));
+            return Err(DeleteError::Other(format!(
+                "The shell reported error 0x{rc:X}"
+            )));
         }
         Ok(())
     }
@@ -322,14 +363,29 @@ mod win {
             let mut label = [0u16; 261];
             let mut fs = [0u16; 261];
             let (label, filesystem) = match unsafe {
-                GetVolumeInformationW(PCWSTR(w.as_ptr()), Some(&mut label), None, None, None, Some(&mut fs))
+                GetVolumeInformationW(
+                    PCWSTR(w.as_ptr()),
+                    Some(&mut label),
+                    None,
+                    None,
+                    None,
+                    Some(&mut fs),
+                )
             } {
                 Ok(()) => (from_wide(&label), from_wide(&fs)),
                 Err(_) => (String::new(), String::new()),
             };
             let (mut free, mut total) = (0u64, 0u64);
-            let _ = unsafe { GetDiskFreeSpaceExW(PCWSTR(w.as_ptr()), Some(&mut free), Some(&mut total), None) };
-            out.push(Drive { root: PathBuf::from(root), label, filesystem, total, free });
+            let _ = unsafe {
+                GetDiskFreeSpaceExW(PCWSTR(w.as_ptr()), Some(&mut free), Some(&mut total), None)
+            };
+            out.push(Drive {
+                root: PathBuf::from(root),
+                label,
+                filesystem,
+                total,
+                free,
+            });
         }
         out
     }
@@ -358,7 +414,10 @@ mod tests {
     #[test]
     fn delete_reports_already_gone() {
         let tmp = tempfile::tempdir().unwrap();
-        assert_eq!(delete(&tmp.path().join("nope"), DeleteMode::Permanent, 0), DeleteOutcome::AlreadyGone);
+        assert_eq!(
+            delete(&tmp.path().join("nope"), DeleteMode::Permanent, 0),
+            DeleteOutcome::AlreadyGone
+        );
     }
 
     #[cfg(not(windows))]
@@ -368,7 +427,10 @@ mod tests {
         let d = tmp.path().join("d");
         std::fs::create_dir_all(d.join("x")).unwrap();
         std::fs::write(d.join("x/f"), b"1").unwrap();
-        assert!(matches!(delete(&d, DeleteMode::RecycleBin, 0), DeleteOutcome::Failed(_)));
+        assert!(matches!(
+            delete(&d, DeleteMode::RecycleBin, 0),
+            DeleteOutcome::Failed(_)
+        ));
         assert!(d.exists(), "a refused recycle must not delete anything");
         assert_eq!(delete(&d, DeleteMode::Permanent, 0), DeleteOutcome::Deleted);
         assert!(!d.exists());

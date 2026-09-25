@@ -23,7 +23,9 @@ pub fn install() {
             .location()
             .map(|l| format!("{}:{}:{}", l.file(), l.line(), l.column()))
             .unwrap_or_else(|| "unknown location".to_owned());
-        diag::log(&format!("PANIC on thread '{thread_name}' at {location}: {message}"));
+        diag::log(&format!(
+            "PANIC on thread '{thread_name}' at {location}: {message}"
+        ));
 
         let report = format!(
             "disktree {} crashed\n\nThread:   {thread_name}\nMessage:  {message}\nLocation: {location}\n\
@@ -38,7 +40,8 @@ pub fn install() {
         let written = write_report(&report);
 
         // Scan/delete workers catch their own panics and the UI shows the error.
-        let background = thread_name.starts_with("disktree-scan") || thread_name.starts_with("disktree-worker");
+        let background =
+            thread_name.starts_with("disktree-scan") || thread_name.starts_with("disktree-worker");
         if !background {
             let where_ = written
                 .map(|p| format!("A crash report was saved to:\n{}", p.display()))
@@ -72,7 +75,10 @@ pub fn write_report(report: &str) -> Option<PathBuf> {
 
 /// No renderer could start: explain, save a report, and show a message box.
 pub fn startup_failed(errors: &[(String, String)]) {
-    let details: String = errors.iter().map(|(r, e)| format!("  {r}: {e}\n")).collect();
+    let details: String = errors
+        .iter()
+        .map(|(r, e)| format!("  {r}: {e}\n"))
+        .collect();
     let report = format!(
         "disktree {} could not open its window.\n\n{details}\nRecent log:\n{}\n",
         env!("CARGO_PKG_VERSION"),

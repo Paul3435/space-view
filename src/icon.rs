@@ -28,7 +28,9 @@ pub fn rgba(size: u32) -> Vec<u8> {
             let gy = fy * 256.0 / size as f32;
             let color = BLOCKS
                 .iter()
-                .find(|(x0, y0, x1, y1, _)| gx >= *x0 as f32 && gx < *x1 as f32 && gy >= *y0 as f32 && gy < *y1 as f32)
+                .find(|(x0, y0, x1, y1, _)| {
+                    gx >= *x0 as f32 && gx < *x1 as f32 && gy >= *y0 as f32 && gy < *y1 as f32
+                })
                 .map(|b| b.4)
                 .unwrap_or(BACKGROUND);
             let i = ((y * size + x) * 4) as usize;
@@ -41,5 +43,9 @@ pub fn rgba(size: u32) -> Vec<u8> {
 
 pub fn app_icon() -> egui::IconData {
     let size = 64;
-    egui::IconData { rgba: rgba(size), width: size, height: size }
+    egui::IconData {
+        rgba: rgba(size),
+        width: size,
+        height: size,
+    }
 }

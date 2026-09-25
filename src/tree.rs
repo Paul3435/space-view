@@ -86,12 +86,23 @@ pub struct ScannedDir {
     pub files: Vec<ScannedFile>,
     pub dirs: Vec<ScannedDir>,
     pub unreadable: bool,
+    /// A second path to a directory already scanned elsewhere (a link the
+    /// file system did not mark as one). Shown as a link, counted as zero.
+    pub alias: bool,
     pub allocated: u64,
     pub logical: u64,
     pub file_count: u64,
 }
 
 impl ScannedDir {
+    pub fn alias(name: Box<str>) -> Self {
+        ScannedDir {
+            name,
+            alias: true,
+            ..ScannedDir::default()
+        }
+    }
+
     /// Builds a directory from its direct contents, computing the rolled-up totals.
     pub fn new(
         name: Box<str>,
@@ -119,6 +130,7 @@ impl ScannedDir {
             files,
             dirs,
             unreadable,
+            alias: false,
             allocated,
             logical,
             file_count,
@@ -277,9 +289,18 @@ impl Tree {
         let mut cur = old.parent;
         while cur != NO_NODE {
             let n = &mut self.nodes[cur as usize];
-            n.allocated = n.allocated.saturating_sub(old.allocated).saturating_add(fresh.allocated);
-            n.logical = n.logical.saturating_sub(old.logical).saturating_add(fresh.logical);
-            n.files = n.files.saturating_sub(old.files).saturating_add(fresh.file_count);
+            n.allocated = n
+                .allocated
+                .saturating_sub(old.allocated)
+                .saturating_add(fresh.allocated);
+            n.logical = n
+                .logical
+                .saturating_sub(old.logical)
+                .saturating_add(fresh.logical);
+            n.files = n
+                .files
+                .saturating_sub(old.files)
+                .saturating_add(fresh.file_count);
             cur = n.parent;
         }
         self.attach_children(id, fresh);
@@ -319,12 +340,30 @@ impl Tree {
                             parent,
                             first_child: NO_NODE,
                             child_count: 0,
-                            kind: if f.is_link { NodeKind::Link } else { NodeKind::File },
+                            kind: if f.is_link {
+                                NodeKind::Link
+                            } else {
+                                NodeKind::File
+                            },
                             category,
                             flags: 0,
                             allocated: f.allocated,
                             logical: f.logical,
                             files: if f.is_link { 0 } else { 1 },
+                        });
+                    }
+                    Item::Dir(d) if d.alias => {
+                        self.nodes.push(Node {
+                            name: d.name,
+                            parent,
+                            first_child: NO_NODE,
+                            child_count: 0,
+                            kind: NodeKind::Link,
+                            category: Category::Other,
+                            flags: 0,
+                            allocated: 0,
+                            logical: 0,
+                            files: 0,
                         });
                     }
                     Item::Dir(mut d) => {
@@ -538,7 +577,11 @@ mod tests {
         let mut t = sample();
         let big = t.find(Path::new("/scan/big")).unwrap();
         // Pretend a partial delete left only a.bin plus a new file behind.
-        let fresh = dir("big", vec![file("a.bin", 4096, 4000), file("new.log", 1024, 1000)], vec![]);
+        let fresh = dir(
+            "big",
+            vec![file("a.bin", 4096, 4000), file("new.log", 1024, 1000)],
+            vec![],
+        );
         t.graft(big, fresh);
         assert_eq!(t.node(big).allocated, 5120);
         assert_eq!(t.node(Tree::ROOT).allocated, 5120 + 4096);
@@ -549,8 +592,29 @@ mod tests {
     }
 
     #[test]
+    fn alias_directories_become_zero_sized_links() {
+        let real = dir("real", vec![file("x", 100, 100)], vec![]);
+        let root = ScannedDir::new(
+            "".into(),
+            vec![],
+            vec![real, ScannedDir::alias("again".into())],
+            false,
+        );
+        let t = Tree::from_scan(PathBuf::from("/r"), root, ScanStats::default());
+        let again = t.find(Path::new("/r/again")).unwrap();
+        assert_eq!(t.node(again).kind, NodeKind::Link);
+        assert_eq!(t.node(Tree::ROOT).allocated, 100);
+        assert_consistent(&t, Tree::ROOT);
+    }
+
+    #[test]
     fn empty_and_unreadable_directories() {
-        let root = ScannedDir::new("".into(), vec![], vec![ScannedDir::new("locked".into(), vec![], vec![], true)], false);
+        let root = ScannedDir::new(
+            "".into(),
+            vec![],
+            vec![ScannedDir::new("locked".into(), vec![], vec![], true)],
+            false,
+        );
         let t = Tree::from_scan(PathBuf::from("/r"), root, ScanStats::default());
         let locked = t.find(Path::new("/r/locked")).unwrap();
         assert!(t.node(locked).is_unreadable());

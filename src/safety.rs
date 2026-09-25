@@ -30,7 +30,9 @@ impl SystemPaths {
     pub fn from_env() -> SystemPaths {
         let var = |k: &str| std::env::var(k).ok().filter(|v| !v.trim().is_empty());
         let system_drive = var("SystemDrive").unwrap_or_else(|| "C:".to_owned());
-        let windows = var("SystemRoot").or_else(|| var("windir")).or_else(|| Some(format!("{system_drive}\\Windows")));
+        let windows = var("SystemRoot")
+            .or_else(|| var("windir"))
+            .or_else(|| Some(format!("{system_drive}\\Windows")));
         let mut program_files: Vec<String> = ["ProgramFiles", "ProgramFiles(x86)", "ProgramW6432"]
             .iter()
             .filter_map(|k| var(k))
@@ -47,7 +49,8 @@ impl SystemPaths {
         SystemPaths {
             windows,
             program_files,
-            program_data: var("ProgramData").or_else(|| Some(format!("{system_drive}\\ProgramData"))),
+            program_data: var("ProgramData")
+                .or_else(|| Some(format!("{system_drive}\\ProgramData"))),
             users,
             profile,
         }
@@ -94,7 +97,8 @@ pub fn is_volume_root(norm: &str) -> bool {
 
 /// `inner` equals `outer` or lies inside it.
 fn is_within(inner: &str, outer: &str) -> bool {
-    inner == outer || (inner.starts_with(outer) && inner.as_bytes().get(outer.len()) == Some(&b'\\'))
+    inner == outer
+        || (inner.starts_with(outer) && inner.as_bytes().get(outer.len()) == Some(&b'\\'))
 }
 
 const ROOT_BLOCKED: &[&str] = &[
@@ -145,8 +149,13 @@ pub fn classify(path: &str, kind: NodeKind, sys: &SystemPaths) -> Protection {
         );
     }
     let name = file_name(&p);
+    let shown = path
+        .trim_end_matches(['\\', '/'])
+        .rsplit(['\\', '/'])
+        .next()
+        .unwrap_or(path);
     if parent_of(&p).is_some_and(|parent| is_volume_root(&parent)) && ROOT_BLOCKED.contains(&name) {
-        return Protection::Blocked(format!("\"{name}\" is used by Windows itself."));
+        return Protection::Blocked(format!("\"{shown}\" is used by Windows itself."));
     }
     if ["system volume information", "$recycle.bin"]
         .iter()
@@ -176,13 +185,15 @@ pub fn classify(path: &str, kind: NodeKind, sys: &SystemPaths) -> Protection {
     }
     if let Some(profile) = &sys.profile {
         if is_within(&normalize(profile), &p) {
-            return Protection::Blocked("This is your user profile folder (or contains it).".to_owned());
+            return Protection::Blocked(
+                "This is your user profile folder (or contains it).".to_owned(),
+            );
         }
     }
     for (dir, label) in &critical {
         if is_within(&p, dir) {
             if label == &"the Users folder" {
-                return users_caution(&p, dir);
+                return users_caution(&p, dir, shown);
             }
             return Protection::Caution(format!(
                 "This is inside {label}. Deleting it can break Windows or installed programs."
@@ -191,14 +202,15 @@ pub fn classify(path: &str, kind: NodeKind, sys: &SystemPaths) -> Protection {
     }
     if let Some(profile) = &sys.profile {
         let prof = normalize(profile);
-        if parent_of(&p).as_deref() == Some(prof.as_str()) && PROFILE_KNOWN_FOLDERS.contains(&name) {
-            return Protection::Caution(format!("This is your \"{name}\" folder."));
+        if parent_of(&p).as_deref() == Some(prof.as_str()) && PROFILE_KNOWN_FOLDERS.contains(&name)
+        {
+            return Protection::Caution(format!("This is your \"{shown}\" folder."));
         }
     }
     Protection::Normal
 }
 
-fn users_caution(p: &str, users: &str) -> Protection {
+fn users_caution(p: &str, users: &str, shown: &str) -> Protection {
     let rel = &p[users.len()..];
     let depth = rel.split('\\').filter(|c| !c.is_empty()).count();
     let comps: Vec<&str> = rel.split('\\').filter(|c| !c.is_empty()).collect();
@@ -206,7 +218,7 @@ fn users_caution(p: &str, users: &str) -> Protection {
         return Protection::Caution("This is a user's entire profile folder.".to_owned());
     }
     if depth == 2 && PROFILE_KNOWN_FOLDERS.contains(&comps[1]) {
-        return Protection::Caution(format!("This is a user's \"{}\" folder.", comps[1]));
+        return Protection::Caution(format!("This is a user's \"{shown}\" folder."));
     }
     Protection::Normal
 }
@@ -218,7 +230,10 @@ mod tests {
     fn sys() -> SystemPaths {
         SystemPaths {
             windows: Some(r"C:\WINDOWS".to_owned()),
-            program_files: vec![r"C:\Program Files".to_owned(), r"C:\Program Files (x86)".to_owned()],
+            program_files: vec![
+                r"C:\Program Files".to_owned(),
+                r"C:\Program Files (x86)".to_owned(),
+            ],
             program_data: Some(r"C:\ProgramData".to_owned()),
             users: Some(r"C:\Users".to_owned()),
             profile: Some(r"C:\Users\davap".to_owned()),
@@ -288,12 +303,33 @@ mod tests {
 
     #[test]
     fn ordinary_items_are_normal() {
-        assert_eq!(c(r"C:\Users\davap\Downloads\a\setup.iso"), Protection::Normal);
-        assert_eq!(c(r"C:\Users\davap\AppData\Local\Temp\x"), Protection::Normal);
+        assert_eq!(
+            c(r"C:\Users\davap\Downloads\a\setup.iso"),
+            Protection::Normal
+        );
+        assert_eq!(
+            c(r"C:\Users\davap\AppData\Local\Temp\x"),
+            Protection::Normal
+        );
         assert_eq!(c(r"C:\Windows.old"), Protection::Normal);
-        assert_eq!(c(r"D:\SteamLibrary\steamapps\common\Game"), Protection::Normal);
+        assert_eq!(
+            c(r"D:\SteamLibrary\steamapps\common\Game"),
+            Protection::Normal
+        );
         assert_eq!(c(r"C:\pagefile.sys.bak\x"), Protection::Normal);
         assert_eq!(c(r"D:\Boot\notes"), Protection::Normal);
+    }
+
+    #[test]
+    fn messages_keep_original_casing() {
+        assert_eq!(
+            c(r"C:\Users\davap\Documents"),
+            Protection::Caution("This is a user's \"Documents\" folder.".to_owned())
+        );
+        assert_eq!(
+            c(r"C:\pagefile.sys"),
+            Protection::Blocked("\"pagefile.sys\" is used by Windows itself.".to_owned())
+        );
     }
 
     #[test]
@@ -313,8 +349,17 @@ mod tests {
             users: Some(r"D:\Users".to_owned()),
             profile: None,
         };
-        assert!(matches!(classify(r"D:\Windows", NodeKind::Dir, &s), Protection::Blocked(_)));
-        assert!(matches!(classify(r"D:\Windows\WinSxS", NodeKind::Dir, &s), Protection::Caution(_)));
-        assert_eq!(classify(r"C:\Windows", NodeKind::Dir, &s), Protection::Normal);
+        assert!(matches!(
+            classify(r"D:\Windows", NodeKind::Dir, &s),
+            Protection::Blocked(_)
+        ));
+        assert!(matches!(
+            classify(r"D:\Windows\WinSxS", NodeKind::Dir, &s),
+            Protection::Caution(_)
+        ));
+        assert_eq!(
+            classify(r"C:\Windows", NodeKind::Dir, &s),
+            Protection::Normal
+        );
     }
 }
