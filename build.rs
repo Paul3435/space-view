@@ -14,15 +14,20 @@ fn main() {
         return;
     }
     let out = PathBuf::from(std::env::var("OUT_DIR").expect("OUT_DIR"));
-    let manifest_dir = PathBuf::from(std::env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR"));
+    let manifest_dir =
+        PathBuf::from(std::env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR"));
 
     let ico = out.join("disktree.ico");
     std::fs::write(&ico, ico_file(&[16, 20, 24, 32, 40, 48, 64, 128, 256])).expect("write icon");
 
-    let template = std::fs::read_to_string(manifest_dir.join("assets/disktree.rc")).expect("read rc");
+    let template =
+        std::fs::read_to_string(manifest_dir.join("assets/disktree.rc")).expect("read rc");
     let rc = template
         .replace("\"disktree.ico\"", &rc_path(&ico))
-        .replace("\"disktree.exe.manifest\"", &rc_path(&manifest_dir.join("assets/disktree.exe.manifest")));
+        .replace(
+            "\"disktree.exe.manifest\"",
+            &rc_path(&manifest_dir.join("assets/disktree.exe.manifest")),
+        );
     let rc_file = out.join("disktree.rc");
     std::fs::write(&rc_file, rc).expect("write rc");
 
