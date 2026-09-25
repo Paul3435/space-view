@@ -131,11 +131,7 @@ pub(super) fn breadcrumbs(ui: &mut Ui, tree: &Tree, current: NodeId, actions: &m
         } else {
             RichText::new(name).color(TEXT_DIM).size(13.0)
         };
-        if ui
-            .add(egui::Button::new(text).frame(false))
-            .clicked()
-            && !is_current
-        {
+        if ui.add(egui::Button::new(text).frame(false)).clicked() && !is_current {
             actions.push(Action::GoTo(n));
         }
     }
@@ -179,23 +175,36 @@ pub(super) fn list_row(
             p.rect_filled(
                 Rect::from_min_size(track.min, Vec2::new(bar_w, 2.0)),
                 0.0,
-                if selected { SELECT } else { Color32::from_rgb(120, 96, 52) },
+                if selected {
+                    SELECT
+                } else {
+                    Color32::from_rgb(120, 96, 52)
+                },
             );
         }
     }
-    let icon = Rect::from_min_size(rect.min + Vec2::new(8.0, 8.0), Vec2::new(8.0, 8.0));
+    let icon = Rect::from_min_size(rect.min + Vec2::new(6.0, 7.0), Vec2::new(12.0, 11.0));
     match n.kind {
         NodeKind::Dir => {
-            let [r, g, b] = n.category.accent();
-            p.rect_filled(icon, 0.0, Color32::from_rgb(r, g, b));
+            // Tab plus body. A filled square made folders and files the same mark.
+            p.rect_filled(
+                Rect::from_min_size(icon.min, Vec2::new(6.0, 3.0)),
+                0.0,
+                Color32::from_rgb(214, 164, 74),
+            );
+            p.rect_filled(
+                Rect::from_min_max(icon.min + Vec2::new(0.0, 2.0), icon.max),
+                0.0,
+                Color32::from_rgb(214, 164, 74),
+            );
         }
         NodeKind::File => {
-            let [r, g, b] = n.category.accent();
-            p.rect_filled(icon.shrink(1.0), 0.0, Color32::from_rgb(r, g, b));
+            let [r, g, b] = n.category.rgb();
+            p.rect_filled(icon.shrink(2.0), 0.0, Color32::from_rgb(r, g, b));
         }
         NodeKind::Link => {
             p.rect_stroke(
-                icon.shrink(1.0),
+                icon.shrink(2.0),
                 0.0,
                 Stroke::new(1.0, TEXT_DIM),
                 StrokeKind::Inside,
@@ -323,10 +332,12 @@ pub(super) fn label_tile(painter: &egui::Painter, r: Rect, name: &str, size: u64
     if r.width() < 48.0 || r.height() < 16.0 {
         return;
     }
-    // Labels sit on muted fills, so they stay light. A dark label on a
-    // bright block was the old look; the fills are no longer that bright.
-    let text_color = Color32::from_rgb(232, 234, 238);
-    let dim = Color32::from_white_alpha(170);
+    let text_color = if luminance(fill) > 0.55 {
+        Color32::from_rgb(20, 22, 26)
+    } else {
+        Color32::from_rgb(232, 234, 238)
+    };
+    let dim = text_color.gamma_multiply(0.75);
     let clip = painter.with_clip_rect(r.shrink(3.0));
     if r.height() >= 34.0 && r.width() >= 64.0 {
         clip.text(
@@ -352,7 +363,6 @@ pub(super) fn label_tile(painter: &egui::Painter, r: Rect, name: &str, size: u64
             text_color,
         );
     }
-    let _ = fill;
 }
 
 /// "1.2 GB" split so the number can be set large and the unit quiet.
@@ -377,4 +387,8 @@ pub(super) fn dir_color(depth: u16, unreadable: bool) -> Color32 {
 pub(super) fn mix(a: Color32, b: Color32, t: f32) -> Color32 {
     let l = |x: u8, y: u8| (x as f32 * (1.0 - t) + y as f32 * t) as u8;
     Color32::from_rgb(l(a.r(), b.r()), l(a.g(), b.g()), l(a.b(), b.b()))
+}
+
+pub(super) fn luminance(c: Color32) -> f32 {
+    (0.299 * c.r() as f32 + 0.587 * c.g() as f32 + 0.114 * c.b() as f32) / 255.0
 }

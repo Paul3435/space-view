@@ -266,6 +266,10 @@ pub fn layout(
                 } else {
                     opts.padding
                 };
+                // Padding here is the folder frame. Sibling files are not
+                // inset in the layout (areas must stay proportional); the
+                // painter insets each file by 1px and strokes it in the
+                // canvas colour so same-type neighbours do not merge.
                 let inner = r.shrink(opts.padding, top, opts.padding, opts.padding);
                 if inner.w >= 2.0 && inner.h >= 2.0 {
                     tiles[tile_index].nested = true;

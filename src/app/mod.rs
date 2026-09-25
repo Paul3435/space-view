@@ -33,11 +33,12 @@ const TEXT: Color32 = Color32::from_rgb(226, 228, 234);
 const TEXT_DIM: Color32 = Color32::from_rgb(138, 144, 158);
 const ACCENT: Color32 = Color32::from_rgb(214, 164, 74);
 const DANGER: Color32 = Color32::from_rgb(176, 72, 72);
-const WARN: Color32 = Color32::from_rgb(214, 164, 74);
+// Not amber. The selection, the share bar and the metric toggle own that.
+const WARN: Color32 = Color32::from_rgb(204, 96, 72);
 const SELECT: Color32 = Color32::from_rgb(232, 184, 92);
 const HAIRLINE: Color32 = Color32::from_rgb(42, 46, 58);
 const ROW_H: f32 = 26.0;
-const SELECTION_CARD_H: f32 = 148.0;
+const SELECTION_CARD_H: f32 = 188.0;
 
 enum Drives {
     Loading(Receiver<Vec<Drive>>),
