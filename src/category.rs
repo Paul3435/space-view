@@ -68,8 +68,15 @@ impl Category {
         if ext.len() > 10 {
             return Category::Other;
         }
-        let ext = ext.to_ascii_lowercase();
-        match ext.as_str() {
+        // Lower-case into a stack buffer: this runs for every file scanned.
+        let mut buf = [0u8; 10];
+        let buf = &mut buf[..ext.len()];
+        buf.copy_from_slice(ext.as_bytes());
+        buf.make_ascii_lowercase();
+        let Ok(ext) = std::str::from_utf8(buf) else {
+            return Category::Other;
+        };
+        match ext {
             "mp4" | "mkv" | "avi" | "mov" | "wmv" | "flv" | "webm" | "m4v" | "mpg" | "mpeg"
             | "ts" | "m2ts" | "vob" | "3gp" => Category::Video,
             "mp3" | "wav" | "flac" | "aac" | "ogg" | "opus" | "wma" | "m4a" | "aiff" | "mid" => {

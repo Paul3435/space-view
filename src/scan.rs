@@ -383,6 +383,64 @@ mod tests {
         }
     }
 
+    #[cfg(windows)]
+    #[test]
+    fn junctions_are_not_followed() {
+        let tmp = tempfile::tempdir().unwrap();
+        let r = tmp.path();
+        fs::create_dir(r.join("real")).unwrap();
+        write(&r.join("real/data.bin"), 50_000);
+        let made = std::process::Command::new("cmd")
+            .args(["/C", "mklink", "/J"])
+            .arg(r.join("junction"))
+            .arg(r.join("real"))
+            .output()
+            .map(|o| o.status.success())
+            .unwrap_or(false);
+        if !made || !r.join("junction").exists() {
+            eprintln!("skipping: could not create a junction on this file system");
+            return;
+        }
+        let t = scan(r, &Progress::default(), 4).unwrap();
+        assert_eq!(t.node(Tree::ROOT).logical, 50_000);
+        let j = t.find(&r.join("junction")).unwrap();
+        assert_eq!(t.node(j).kind, NodeKind::Link);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn paths_longer_than_max_path_are_scanned() {
+        let tmp = tempfile::tempdir().unwrap();
+        let mut p = tmp.path().to_path_buf();
+        for _ in 0..12 {
+            p.push("a_rather_long_directory_name_segment");
+        }
+        assert!(p.as_os_str().len() > 400);
+        fs::create_dir_all(&p).unwrap();
+        write(&p.join("deep.bin"), 1234);
+        let t = scan(tmp.path(), &Progress::default(), 4).unwrap();
+        assert_eq!(t.node(Tree::ROOT).logical, 1234);
+        assert_eq!(t.stats.unreadable, 0);
+        assert!(t.find(&p.join("deep.bin")).is_some());
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn names_with_trailing_dots_and_spaces_are_read() {
+        // Only reachable through \\?\ paths; plain Win32 paths strip them.
+        let tmp = tempfile::tempdir().unwrap();
+        let verbatim = std::path::PathBuf::from(format!(r"\\?\{}", tmp.path().display()));
+        let odd = verbatim.join("odd name. ");
+        if fs::create_dir(&odd).is_err() {
+            eprintln!("skipping: file system rejects trailing dots/spaces");
+            return;
+        }
+        fs::write(odd.join("f"), vec![1u8; 100]).unwrap();
+        let t = scan(tmp.path(), &Progress::default(), 2).unwrap();
+        assert_eq!(t.node(Tree::ROOT).logical, 100);
+        assert_eq!(t.stats.unreadable, 0);
+    }
+
     #[test]
     fn visited_set_detects_repeats() {
         let v = Visited::default();

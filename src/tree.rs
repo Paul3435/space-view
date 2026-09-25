@@ -41,6 +41,7 @@ pub struct Node {
     pub first_child: NodeId,
     pub child_count: u32,
     pub kind: NodeKind,
+    /// File type; for directories, the type taking the most space inside.
     pub category: Category,
     pub flags: u8,
     pub allocated: u64,
@@ -92,9 +93,26 @@ pub struct ScannedDir {
     pub allocated: u64,
     pub logical: u64,
     pub file_count: u64,
+    /// Allocated bytes per [`Category`] in this subtree (for colouring folders).
+    pub by_category: [u64; Category::ALL.len()],
 }
 
 impl ScannedDir {
+    /// The file type that takes the most space in this subtree.
+    pub fn dominant(&self) -> Category {
+        let (i, &max) = self
+            .by_category
+            .iter()
+            .enumerate()
+            .max_by_key(|(_, &b)| b)
+            .expect("non-empty");
+        if max == 0 {
+            Category::Other
+        } else {
+            Category::ALL[i]
+        }
+    }
+
     pub fn alias(name: Box<str>) -> Self {
         ScannedDir {
             name,
@@ -113,17 +131,23 @@ impl ScannedDir {
         let mut allocated = 0u64;
         let mut logical = 0u64;
         let mut file_count = 0u64;
+        let mut by_category = [0u64; Category::ALL.len()];
         for f in &files {
             allocated = allocated.saturating_add(f.allocated);
             logical = logical.saturating_add(f.logical);
             if !f.is_link {
                 file_count += 1;
+                let c = Category::from_name(&f.name) as usize;
+                by_category[c] = by_category[c].saturating_add(f.allocated);
             }
         }
         for d in &dirs {
             allocated = allocated.saturating_add(d.allocated);
             logical = logical.saturating_add(d.logical);
             file_count += d.file_count;
+            for (acc, b) in by_category.iter_mut().zip(d.by_category) {
+                *acc = acc.saturating_add(b);
+            }
         }
         ScannedDir {
             name,
@@ -134,6 +158,7 @@ impl ScannedDir {
             allocated,
             logical,
             file_count,
+            by_category,
         }
     }
 }
@@ -284,6 +309,7 @@ impl Tree {
             n.files = fresh.file_count;
             n.first_child = NO_NODE;
             n.child_count = 0;
+            n.category = fresh.dominant();
             n.flags = if fresh.unreadable { FLAG_UNREADABLE } else { 0 };
         }
         let mut cur = old.parent;
@@ -405,7 +431,7 @@ fn dir_node(name: Box<str>, parent: NodeId, d: &ScannedDir) -> Node {
         first_child: NO_NODE,
         child_count: 0,
         kind: NodeKind::Dir,
-        category: Category::Other,
+        category: d.dominant(),
         flags: if d.unreadable { FLAG_UNREADABLE } else { 0 },
         allocated: d.allocated,
         logical: d.logical,
@@ -589,6 +615,20 @@ mod tests {
         assert!(t.find(Path::new("/scan/big/deep")).is_none());
         assert!(t.find(Path::new("/scan/big/new.log")).is_some());
         assert_consistent(&t, Tree::ROOT);
+    }
+
+    #[test]
+    fn directories_know_their_dominant_file_type() {
+        let t = sample();
+        let big = t.find(Path::new("/scan/big")).unwrap();
+        assert_eq!(
+            t.node(big).category,
+            Category::DiskImage,
+            "b.iso outweighs a.bin"
+        );
+        assert_eq!(t.node(Tree::ROOT).category, Category::DiskImage);
+        let empty = ScannedDir::new("e".into(), vec![], vec![], false);
+        assert_eq!(empty.dominant(), Category::Other);
     }
 
     #[test]

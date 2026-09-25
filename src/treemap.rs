@@ -125,10 +125,12 @@ pub enum TileKind {
     /// A file, link, or a directory drawn as a frame around its children.
     Node(NodeId),
     /// Children of a directory too small to draw individually, aggregated.
+    /// `largest` is the biggest of them (used to pick a colour).
     Rest {
         parent: NodeId,
         count: u32,
         size: u64,
+        largest: NodeId,
     },
 }
 
@@ -139,6 +141,8 @@ pub struct Tile {
     pub depth: u16,
     /// For directory tiles: whether the header strip holds the name.
     pub has_header: bool,
+    /// For directory tiles: whether its children are laid out inside it.
+    pub nested: bool,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -177,12 +181,16 @@ pub fn layout(
     metric: Metric,
     opts: &LayoutOptions,
 ) -> Vec<Tile> {
-    let mut tiles = Vec::new();
-    let mut queue: VecDeque<(NodeId, Rect, u16)> = VecDeque::new();
-    queue.push_back((root, bounds, 0));
+    let mut tiles: Vec<Tile> = Vec::new();
+    let mut queue: VecDeque<(NodeId, Rect, u16, usize)> = VecDeque::new();
+    queue.push_back((root, bounds, 0, usize::MAX));
 
-    while let Some((dir, area, depth)) = queue.pop_front() {
+    while let Some((dir, area, depth, _)) = queue.pop_front() {
         if tiles.len() >= opts.max_tiles {
+            // Out of budget: these folders will not get their children drawn.
+            for (_, _, _, t) in queue.drain(..) {
+                tiles[t].nested = false;
+            }
             break;
         }
         let children = tree.children_by_size(dir, metric);
@@ -196,6 +204,7 @@ pub fn layout(
         let mut shown = Vec::new();
         let mut rest_size = 0u64;
         let mut rest_count = 0u32;
+        let mut rest_largest = crate::tree::NO_NODE;
         for &c in &children {
             let s = tree.node(c).size(metric);
             if s == 0 {
@@ -205,6 +214,9 @@ pub fn layout(
                 sizes.push(s as f64);
                 shown.push(c);
             } else {
+                if rest_count == 0 {
+                    rest_largest = c;
+                }
                 rest_size += s;
                 rest_count += 1;
             }
@@ -225,9 +237,11 @@ pub fn layout(
                         parent: dir,
                         count: rest_count,
                         size: rest_size,
+                        largest: rest_largest,
                     },
                     depth,
                     has_header: false,
+                    nested: false,
                 });
                 continue;
             }
@@ -238,11 +252,13 @@ pub fn layout(
                 && r.w >= opts.min_dir_side
                 && r.h >= opts.min_dir_side;
             let has_header = can_nest && r.h >= opts.header * 2.5 && r.w >= 40.0;
+            let tile_index = tiles.len();
             tiles.push(Tile {
                 rect: *r,
                 kind: TileKind::Node(id),
                 depth,
                 has_header,
+                nested: false,
             });
             if can_nest && tree.children(id).next().is_some() {
                 let top = if has_header {
@@ -252,7 +268,8 @@ pub fn layout(
                 };
                 let inner = r.shrink(opts.padding, top, opts.padding, opts.padding);
                 if inner.w >= 2.0 && inner.h >= 2.0 {
-                    queue.push_back((id, inner, depth + 1));
+                    tiles[tile_index].nested = true;
+                    queue.push_back((id, inner, depth + 1, tile_index));
                 }
             }
         }
@@ -418,6 +435,7 @@ mod tests {
         assert!(inside(&x.rect, &inner.rect));
         assert_eq!(big.depth, 0);
         assert_eq!(x.depth, 2);
+        assert!(big.nested && inner.nested && !x.nested);
         // Hit testing returns the deepest tile.
         let hit = hit_test(&tiles, x.rect.x + x.rect.w / 2.0, x.rect.y + x.rect.h / 2.0).unwrap();
         assert_eq!(tiles[hit].kind, x.kind);
@@ -446,14 +464,17 @@ mod tests {
             .iter()
             .find(|tile| matches!(tile.kind, TileKind::Rest { parent, .. } if parent == small))
             .expect("rest tile for the tiny files");
-        assert_eq!(
-            rest.kind,
-            TileKind::Rest {
-                parent: small,
-                count: 5000,
-                size: 5000
-            }
-        );
+        let TileKind::Rest {
+            parent,
+            count,
+            size,
+            largest,
+        } = rest.kind
+        else {
+            unreachable!()
+        };
+        assert_eq!((parent, count, size), (small, 5000, 5000));
+        assert_eq!(t.node(largest).parent, small);
         assert!(
             tiles.len() < 100,
             "tiny files must not produce thousands of tiles"
