@@ -1,0 +1,54 @@
+[package]
+name = "disktree"
+version = "0.2.0"
+edition = "2021"
+rust-version = "1.95"
+description = "A treemap for finding and removing what fills your disk, for Windows"
+license = "MIT"
+build = "build.rs"
+
+[lib]
+name = "disktree"
+path = "src/lib.rs"
+
+[[bin]]
+name = "disktree"
+path = "src/main.rs"
+
+[dependencies]
+eframe = { version = "0.36", default-features = false, features = [
+    "default_fonts",
+    "glow",
+    "wgpu",
+    "x11",
+] }
+egui = "0.36"
+rayon = "1.10"
+raw-window-handle = "0.6"
+
+[target.'cfg(windows)'.dependencies]
+rfd = "0.17"
+windows = { version = "0.62", features = [
+    "Win32_Foundation",
+    "Win32_Security",
+    "Win32_Storage_FileSystem",
+    "Win32_System_Com",
+    "Win32_System_Console",
+    "Win32_System_Diagnostics_Debug",
+    "Win32_UI_Shell",
+    "Win32_UI_Shell_Common",
+    "Win32_UI_WindowsAndMessaging",
+] }
+
+[build-dependencies]
+embed-resource = "3"
+
+[dev-dependencies]
+tempfile = "3"
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 1
+strip = true
+panic = "unwind"

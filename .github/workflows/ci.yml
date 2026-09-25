@@ -1,0 +1,42 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  windows:
+    name: Windows (native build + tests)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Test (includes junction, long-path and trailing-dot tests)
+        run: cargo test --lib
+      - name: Build release exe
+        run: cargo build --release
+      - uses: actions/upload-artifact@v4
+        with:
+          name: disktree-windows-x86_64
+          path: target/release/disktree.exe
+
+  linux-cross:
+    name: Linux (tests + cross-compiled Windows exe)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+      - name: Install tools
+        run: sudo apt-get update && sudo apt-get install -y llvm clang lld libxkbcommon-x11-0
+      - name: Test
+        run: cargo test --lib
+      - name: Install cargo-xwin
+        run: cargo install cargo-xwin --locked
+      - name: Cross-compile
+        run: ./scripts/build-windows.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: disktree-windows-x86_64-cross
+          path: dist/disktree.exe
